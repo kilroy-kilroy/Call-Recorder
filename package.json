@@ -1,0 +1,35 @@
+{
+  "name": "call-recorder",
+  "version": "1.0.0",
+  "description": "Desktop call recorder powered by Recall.ai",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "build:mac": "electron-builder --mac",
+    "build:win": "electron-builder --win",
+    "build:linux": "electron-builder --linux"
+  },
+  "build": {
+    "appId": "com.callrecorder.app",
+    "productName": "Call Recorder",
+    "files": [
+      "src/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  },
+  "keywords": ["call", "recorder", "meeting", "recall.ai"],
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  }
+}
