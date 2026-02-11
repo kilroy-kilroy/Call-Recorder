@@ -1,5 +1,9 @@
 const https = require("https");
 
+/**
+ * Client for the Recall.ai REST API — used for creating SDK uploads
+ * and retrieving recordings. This runs in the Electron main process.
+ */
 class RecallAPI {
   constructor(apiKey, region = "us-west-2") {
     this.apiKey = apiKey;
@@ -41,78 +45,38 @@ class RecallAPI {
     });
   }
 
-  async createBot(meetingUrl, botName = "Call Recorder", options = {}) {
-    const body = {
-      meeting_url: meetingUrl,
-      bot_name: botName,
-      recording_config: {
-        video_mixed_mp4: {},
-        transcript: {
-          provider: {
-            meeting_captions: {},
-          },
-        },
-        ...options.recording_config,
-      },
-    };
-
-    if (options.join_at) {
-      body.join_at = options.join_at;
+  /**
+   * Create a Desktop SDK upload. Returns { id, upload_token, recording_id }.
+   * The upload_token is passed to RecallAiSdk.startRecording().
+   */
+  async createSdkUpload(recordingConfig = null) {
+    const body = {};
+    if (recordingConfig) {
+      body.recording_config = recordingConfig;
     }
-
-    return this._request("POST", "/bot/", body);
+    return this._request("POST", "/sdk_upload/", body);
   }
 
-  async getBot(botId) {
-    return this._request("GET", `/bot/${botId}/`);
+  /**
+   * Retrieve a recording by ID. Returns media download URLs.
+   */
+  async getRecording(recordingId) {
+    return this._request("GET", `/recording/${recordingId}/`);
   }
 
-  async listBots(cursor = null) {
+  /**
+   * List SDK uploads.
+   */
+  async listSdkUploads(cursor = null) {
     const query = cursor ? `?cursor=${cursor}` : "";
-    return this._request("GET", `/bot/${query}`);
+    return this._request("GET", `/sdk_upload/${query}`);
   }
 
-  async deleteBot(botId) {
-    return this._request("DELETE", `/bot/${botId}/`);
-  }
-
-  async leaveMeeting(botId) {
-    return this._request("POST", `/bot/${botId}/leave_call/`);
-  }
-
-  getLatestStatus(bot) {
-    if (!bot.status_changes || bot.status_changes.length === 0) {
-      return { code: "unknown", sub_code: null };
-    }
-    return bot.status_changes[bot.status_changes.length - 1];
-  }
-
-  getRecordingUrl(bot) {
-    if (
-      bot.recordings &&
-      bot.recordings.length > 0 &&
-      bot.recordings[0].media_shortcuts
-    ) {
-      const shortcuts = bot.recordings[0].media_shortcuts;
-      if (shortcuts.video_mixed && shortcuts.video_mixed.data) {
-        return shortcuts.video_mixed.data.download_url;
-      }
-    }
-    return null;
-  }
-
-  getTranscriptUrl(bot) {
-    if (
-      bot.recordings &&
-      bot.recordings.length > 0 &&
-      bot.recordings[0].media_shortcuts
-    ) {
-      const shortcuts = bot.recordings[0].media_shortcuts;
-      if (shortcuts.transcript && shortcuts.transcript.data) {
-        return shortcuts.transcript.data.download_url;
-      }
-    }
-    return null;
+  /**
+   * Retrieve a specific SDK upload by ID.
+   */
+  async getSdkUpload(uploadId) {
+    return this._request("GET", `/sdk_upload/${uploadId}/`);
   }
 }
 

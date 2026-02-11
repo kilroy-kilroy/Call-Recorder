@@ -4,10 +4,23 @@ const fs = require("fs");
 const https = require("https");
 const RecallAPI = require("./recall-api");
 
+let RecallAiSdk;
+try {
+  RecallAiSdk = require("@recallai/desktop-sdk");
+} catch {
+  // SDK may not be available on all platforms (e.g. Linux dev)
+  RecallAiSdk = null;
+}
+
 const SETTINGS_PATH = path.join(app.getPath("userData"), "settings.json");
+const RECORDINGS_PATH = path.join(app.getPath("userData"), "recordings.json");
 
 let mainWindow;
 let recallApi;
+let sdkInitialized = false;
+let activeRecordings = new Map(); // windowId -> { uploadId, uploadToken }
+
+// --- Settings ---
 
 function loadSettings() {
   try {
@@ -20,7 +33,7 @@ function loadSettings() {
   return {
     apiKey: "db35f9b6084afe226422fe51d30b1137d815b194",
     region: "us-west-2",
-    botName: "Call Recorder",
+    autoRecord: false,
   };
 }
 
@@ -28,21 +41,181 @@ function saveSettings(settings) {
   fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2));
 }
 
+// --- Local recording history ---
+
+function loadRecordingHistory() {
+  try {
+    if (fs.existsSync(RECORDINGS_PATH)) {
+      return JSON.parse(fs.readFileSync(RECORDINGS_PATH, "utf-8"));
+    }
+  } catch {
+    // ignore
+  }
+  return [];
+}
+
+function saveRecordingHistory(recordings) {
+  fs.writeFileSync(RECORDINGS_PATH, JSON.stringify(recordings, null, 2));
+}
+
+function addRecordingToHistory(entry) {
+  const recordings = loadRecordingHistory();
+  recordings.unshift(entry);
+  // Keep last 100
+  if (recordings.length > 100) recordings.length = 100;
+  saveRecordingHistory(recordings);
+}
+
+// --- API ---
+
 function getApi() {
   const settings = loadSettings();
   if (!settings.apiKey) {
-    throw new Error("API key not configured. Go to Settings to add your Recall.ai API key.");
+    throw new Error(
+      "API key not configured. Go to Settings to add your Recall.ai API key."
+    );
   }
-  if (!recallApi || recallApi.apiKey !== settings.apiKey || recallApi.baseHost !== `${settings.region}.recall.ai`) {
+  if (
+    !recallApi ||
+    recallApi.apiKey !== settings.apiKey ||
+    recallApi.baseHost !== `${settings.region}.recall.ai`
+  ) {
     recallApi = new RecallAPI(settings.apiKey, settings.region);
   }
   return recallApi;
 }
 
+// --- Desktop SDK ---
+
+function initSdk() {
+  if (!RecallAiSdk || sdkInitialized) return;
+
+  const settings = loadSettings();
+  const apiUrl = `https://${settings.region}.recall.ai`;
+
+  try {
+    RecallAiSdk.init({ apiUrl });
+    sdkInitialized = true;
+    setupSdkEventListeners();
+  } catch (err) {
+    sendToRenderer("sdk-error", {
+      message: `SDK init failed: ${err.message}`,
+    });
+  }
+}
+
+function setupSdkEventListeners() {
+  if (!RecallAiSdk) return;
+
+  RecallAiSdk.addEventListener("meeting-detected", (evt) => {
+    sendToRenderer("meeting-detected", {
+      windowId: evt.window.id,
+      platform: evt.window.platform || "unknown",
+      title: evt.window.title || "",
+      meetingUrl: evt.window.meetingUrl || "",
+    });
+
+    // Auto-record if enabled
+    const settings = loadSettings();
+    if (settings.autoRecord) {
+      handleStartRecording(evt.window.id);
+    }
+  });
+
+  RecallAiSdk.addEventListener("meeting-updated", (evt) => {
+    sendToRenderer("meeting-updated", {
+      windowId: evt.window.id,
+      platform: evt.window.platform || "unknown",
+      title: evt.window.title || "",
+      meetingUrl: evt.window.meetingUrl || "",
+    });
+  });
+
+  RecallAiSdk.addEventListener("sdk-state-change", (evt) => {
+    sendToRenderer("sdk-state-change", evt);
+  });
+
+  RecallAiSdk.addEventListener("recording-ended", (evt) => {
+    const windowId = evt.window?.id;
+    const recording = activeRecordings.get(windowId);
+
+    sendToRenderer("recording-ended", {
+      windowId,
+      uploadId: recording?.uploadId || null,
+    });
+
+    if (recording) {
+      addRecordingToHistory({
+        uploadId: recording.uploadId,
+        platform: evt.window?.platform || "unknown",
+        title: evt.window?.title || "",
+        endedAt: new Date().toISOString(),
+      });
+      activeRecordings.delete(windowId);
+    }
+  });
+
+  RecallAiSdk.addEventListener("realtime-event", (evt) => {
+    sendToRenderer("realtime-event", evt);
+  });
+}
+
+function sendToRenderer(channel, data) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(channel, data);
+  }
+}
+
+async function handleStartRecording(windowId) {
+  const api = getApi();
+  const settings = loadSettings();
+
+  // Create SDK upload with transcript config
+  const recordingConfig = {
+    transcript: {
+      provider: {
+        meeting_captions: {},
+      },
+    },
+    realtime_endpoints: [
+      {
+        type: "desktop_sdk_callback",
+        events: [
+          "transcript.data",
+          "transcript.partial_data",
+          "participant_events.join",
+          "participant_events.speech_on",
+          "participant_events.speech_off",
+        ],
+      },
+    ],
+  };
+
+  const upload = await api.createSdkUpload(recordingConfig);
+
+  activeRecordings.set(windowId, {
+    uploadId: upload.id,
+    uploadToken: upload.upload_token,
+    startedAt: new Date().toISOString(),
+  });
+
+  await RecallAiSdk.startRecording({
+    windowId,
+    uploadToken: upload.upload_token,
+  });
+
+  sendToRenderer("recording-started", {
+    windowId,
+    uploadId: upload.id,
+  });
+}
+
+// --- Window ---
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 900,
-    height: 680,
+    height: 700,
     minWidth: 700,
     minHeight: 500,
     webPreferences: {
@@ -55,6 +228,10 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, "index.html"));
+
+  mainWindow.webContents.on("did-finish-load", () => {
+    initSdk();
+  });
 }
 
 app.whenReady().then(createWindow);
@@ -75,39 +252,82 @@ ipcMain.handle("get-settings", () => {
 
 ipcMain.handle("save-settings", (_event, settings) => {
   saveSettings(settings);
-  recallApi = null; // force re-init
+  recallApi = null;
+  // Re-initialize SDK with new region if needed
+  if (RecallAiSdk && sdkInitialized) {
+    sdkInitialized = false;
+    initSdk();
+  }
   return { success: true };
 });
 
-ipcMain.handle("create-bot", async (_event, meetingUrl, botName) => {
-  const api = getApi();
-  const settings = loadSettings();
-  return api.createBot(meetingUrl, botName || settings.botName);
+ipcMain.handle("request-permissions", async () => {
+  if (!RecallAiSdk) {
+    return { error: "Desktop SDK not available on this platform" };
+  }
+  try {
+    RecallAiSdk.requestPermission("accessibility");
+    RecallAiSdk.requestPermission("microphone");
+    RecallAiSdk.requestPermission("screen-capture");
+    return { success: true };
+  } catch (err) {
+    return { error: err.message };
+  }
 });
 
-ipcMain.handle("get-bot", async (_event, botId) => {
-  const api = getApi();
-  return api.getBot(botId);
+ipcMain.handle("start-recording", async (_event, windowId) => {
+  if (!RecallAiSdk) {
+    throw new Error("Desktop SDK not available on this platform");
+  }
+  await handleStartRecording(windowId);
+  return { success: true };
 });
 
-ipcMain.handle("list-bots", async () => {
-  const api = getApi();
-  return api.listBots();
+ipcMain.handle("stop-recording", async () => {
+  if (!RecallAiSdk) {
+    throw new Error("Desktop SDK not available on this platform");
+  }
+  try {
+    await RecallAiSdk.stopRecording();
+    return { success: true };
+  } catch (err) {
+    return { error: err.message };
+  }
 });
 
-ipcMain.handle("delete-bot", async (_event, botId) => {
+ipcMain.handle("list-recordings", async () => {
+  const history = loadRecordingHistory();
   const api = getApi();
-  return api.deleteBot(botId);
+
+  // Enrich with download URLs from the API
+  const enriched = [];
+  for (const entry of history.slice(0, 20)) {
+    try {
+      const upload = await api.getSdkUpload(entry.uploadId);
+      enriched.push({
+        ...entry,
+        status: upload.status?.code || "unknown",
+        recordingId: upload.recording_id || null,
+      });
+    } catch {
+      enriched.push({ ...entry, status: "unknown", recordingId: null });
+    }
+  }
+  return enriched;
 });
 
-ipcMain.handle("leave-meeting", async (_event, botId) => {
+ipcMain.handle("download-recording", async (_event, recordingId, name) => {
   const api = getApi();
-  return api.leaveMeeting(botId);
-});
+  const recording = await api.getRecording(recordingId);
 
-ipcMain.handle("download-recording", async (_event, url, botId) => {
+  const videoUrl =
+    recording.media_shortcuts?.video_mixed?.data?.download_url || null;
+  if (!videoUrl) {
+    throw new Error("No video recording available yet");
+  }
+
   const { filePath } = await dialog.showSaveDialog(mainWindow, {
-    defaultPath: `recording-${botId}.mp4`,
+    defaultPath: `${name || "recording"}.mp4`,
     filters: [{ name: "Video", extensions: ["mp4"] }],
   });
 
@@ -115,24 +335,22 @@ ipcMain.handle("download-recording", async (_event, url, botId) => {
 
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(filePath);
-    https.get(url, (res) => {
-      if (res.statusCode === 301 || res.statusCode === 302) {
-        https.get(res.headers.location, (redirectRes) => {
-          redirectRes.pipe(file);
+    const fetch = (url) => {
+      https
+        .get(url, (res) => {
+          if (res.statusCode === 301 || res.statusCode === 302) {
+            fetch(res.headers.location);
+            return;
+          }
+          res.pipe(file);
           file.on("finish", () => {
             file.close();
             shell.showItemInFolder(filePath);
             resolve({ success: true, path: filePath });
           });
-        }).on("error", reject);
-        return;
-      }
-      res.pipe(file);
-      file.on("finish", () => {
-        file.close();
-        shell.showItemInFolder(filePath);
-        resolve({ success: true, path: filePath });
-      });
-    }).on("error", reject);
+        })
+        .on("error", reject);
+    };
+    fetch(videoUrl);
   });
 });
