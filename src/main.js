@@ -4,6 +4,15 @@ const fs = require("fs");
 const https = require("https");
 const RecallAPI = require("./recall-api");
 
+// Suppress EPIPE errors on stdout/stderr (can occur when the launching
+// terminal or parent process closes the pipe while the app is still running).
+process.stdout?.on("error", (err) => {
+  if (err.code !== "EPIPE") throw err;
+});
+process.stderr?.on("error", (err) => {
+  if (err.code !== "EPIPE") throw err;
+});
+
 let RecallAiSdk;
 try {
   RecallAiSdk = require("@recallai/desktop-sdk");
