@@ -319,6 +319,156 @@
     .toast.error { border-color: var(--red); }
     .toast.success { border-color: var(--green); }
 
+    /* --- Recording detail view --- */
+    .detail-back {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--text-dim);
+      cursor: pointer;
+      background: none;
+      border: none;
+      padding: 0;
+      margin-bottom: 16px;
+      transition: color 0.15s;
+    }
+    .detail-back:hover { color: var(--text); }
+
+    .detail-header {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .detail-header .meeting-info { flex: 1; }
+
+    .detail-tabs {
+      display: flex;
+      gap: 2px;
+      margin-bottom: 16px;
+    }
+    .detail-tab {
+      padding: 8px 18px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-dim);
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      border-radius: var(--radius);
+      transition: all 0.15s;
+    }
+    .detail-tab:hover { color: var(--text); background: var(--surface-hover); }
+    .detail-tab.active { color: var(--accent); border-color: var(--accent); background: var(--surface); }
+
+    .detail-panel { display: none; }
+    .detail-panel.active { display: block; }
+
+    .summary-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      margin-bottom: 12px;
+    }
+    .summary-card h4 {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 10px;
+    }
+    .summary-card p, .summary-card ul {
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--text);
+    }
+    .summary-card ul {
+      list-style: none;
+      padding: 0;
+    }
+    .summary-card li {
+      padding: 4px 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .summary-card li::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 12px;
+    }
+    .stat-item {
+      text-align: center;
+      padding: 12px;
+      background: var(--bg);
+      border-radius: var(--radius);
+    }
+    .stat-value {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--accent);
+    }
+    .stat-label {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-top: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    .full-transcript {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      max-height: 500px;
+      overflow-y: auto;
+    }
+    .full-transcript .transcript-header {
+      padding: 12px 18px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      background: var(--surface);
+    }
+    .full-transcript .transcript-body { padding: 8px 0; }
+    .full-transcript .transcript-line {
+      padding: 6px 18px;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    .full-transcript .speaker {
+      font-weight: 600;
+      color: var(--accent);
+      margin-right: 6px;
+    }
+
+    .loading-spinner {
+      text-align: center;
+      padding: 40px;
+      color: var(--text-dim);
+      font-size: 13px;
+    }
+
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
@@ -371,10 +521,35 @@
 
     <!-- RECORDINGS -->
     <div class="panel" id="panel-recordings">
-      <div id="recordings-list"></div>
-      <div id="empty-recordings" class="empty-state">
-        <h3>No recordings yet</h3>
-        <p>Completed recordings will appear here.</p>
+      <!-- List view -->
+      <div id="recordings-list-view">
+        <div id="recordings-list"></div>
+        <div id="empty-recordings" class="empty-state">
+          <h3>No recordings yet</h3>
+          <p>Completed recordings will appear here.</p>
+        </div>
+      </div>
+
+      <!-- Detail view (transcript + summary) -->
+      <div id="recording-detail-view" style="display:none">
+        <button class="detail-back" id="detail-back-btn">&larr; Back to recordings</button>
+
+        <div class="detail-header" id="detail-header"></div>
+
+        <div class="detail-tabs">
+          <button class="detail-tab active" data-dtab="summary">Summary</button>
+          <button class="detail-tab" data-dtab="transcript">Full Transcript</button>
+        </div>
+
+        <div class="detail-panel active" id="dpanel-summary">
+          <div class="loading-spinner" id="summary-loading">Loading transcript...</div>
+          <div id="summary-content" style="display:none"></div>
+        </div>
+
+        <div class="detail-panel" id="dpanel-transcript">
+          <div class="loading-spinner" id="transcript-loading">Loading transcript...</div>
+          <div id="transcript-content" style="display:none"></div>
+        </div>
       </div>
     </div>
 
@@ -667,6 +842,7 @@
           const card = document.createElement("div");
           card.className = "recording-card";
           const hasVideo = rec.recordingId && rec.status === "complete";
+          const recIdx = recordings.indexOf(rec);
           card.innerHTML = `
             <div class="meeting-icon ${icon.cls}">${icon.letter}</div>
             <div class="recording-info">
@@ -677,11 +853,19 @@
               </div>
             </div>
             <div class="meeting-actions">
+              <button class="btn btn-sm btn-outline" data-view-idx="${recIdx}">View</button>
               ${hasVideo ? `<button class="btn btn-sm btn-primary" data-dl-id="${esc(rec.recordingId)}" data-dl-name="${esc(rec.title || rec.platform || "recording")}">Download</button>` : `<span style="font-size:12px;color:var(--text-dim)">${rec.status === "uploading" ? "Uploading..." : rec.status === "complete" ? "Ready" : "Processing..."}</span>`}
             </div>
           `;
           list.appendChild(card);
         }
+
+        list.querySelectorAll("[data-view-idx]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const idx = parseInt(btn.dataset.viewIdx, 10);
+            openRecordingDetail(recordings[idx]);
+          });
+        });
 
         list.querySelectorAll("[data-dl-id]").forEach((btn) => {
           btn.addEventListener("click", async () => {
@@ -702,6 +886,205 @@
       } catch (err) {
         showToast(err.message || "Failed to load recordings", "error");
       }
+    }
+
+    // --- Recording detail view ---
+    document.querySelectorAll(".detail-tab").forEach((tab) => {
+      tab.addEventListener("click", () => {
+        document.querySelectorAll(".detail-tab").forEach((t) => t.classList.remove("active"));
+        document.querySelectorAll(".detail-panel").forEach((p) => p.classList.remove("active"));
+        tab.classList.add("active");
+        document.getElementById(`dpanel-${tab.dataset.dtab}`).classList.add("active");
+      });
+    });
+
+    document.getElementById("detail-back-btn").addEventListener("click", () => {
+      document.getElementById("recording-detail-view").style.display = "none";
+      document.getElementById("recordings-list-view").style.display = "";
+    });
+
+    async function openRecordingDetail(rec) {
+      document.getElementById("recordings-list-view").style.display = "none";
+      document.getElementById("recording-detail-view").style.display = "";
+
+      // Reset to summary tab
+      document.querySelectorAll(".detail-tab").forEach((t) => t.classList.remove("active"));
+      document.querySelectorAll(".detail-panel").forEach((p) => p.classList.remove("active"));
+      document.querySelector('.detail-tab[data-dtab="summary"]').classList.add("active");
+      document.getElementById("dpanel-summary").classList.add("active");
+
+      // Render header
+      const icon = platformIcon(rec.platform);
+      document.getElementById("detail-header").innerHTML = `
+        <div class="meeting-icon ${icon.cls}">${icon.letter}</div>
+        <div class="meeting-info">
+          <div class="meeting-name">${esc(rec.title || rec.platform || "Recording")}</div>
+          <div class="meeting-meta">
+            ${rec.endedAt ? new Date(rec.endedAt).toLocaleString() : ""}
+            · ${esc(rec.platform || "unknown")}
+          </div>
+        </div>
+      `;
+
+      // Show loading states
+      document.getElementById("summary-loading").style.display = "";
+      document.getElementById("summary-content").style.display = "none";
+      document.getElementById("transcript-loading").style.display = "";
+      document.getElementById("transcript-content").style.display = "none";
+
+      // Fetch transcript
+      try {
+        const result = await window.api.getTranscript(rec.uploadId, rec.recordingId || null);
+        const segments = result.segments || [];
+
+        renderTranscript(segments);
+        renderSummary(segments, rec);
+      } catch (err) {
+        const errMsg = `<div class="summary-card"><p style="color:var(--text-dim)">${esc(err.message || "Failed to load transcript")}</p></div>`;
+
+        document.getElementById("summary-loading").style.display = "none";
+        document.getElementById("summary-content").innerHTML = errMsg;
+        document.getElementById("summary-content").style.display = "";
+
+        document.getElementById("transcript-loading").style.display = "none";
+        document.getElementById("transcript-content").innerHTML = errMsg;
+        document.getElementById("transcript-content").style.display = "";
+      }
+    }
+
+    function renderTranscript(segments) {
+      const container = document.getElementById("transcript-content");
+      document.getElementById("transcript-loading").style.display = "none";
+
+      if (segments.length === 0) {
+        container.innerHTML = '<div class="summary-card"><p style="color:var(--text-dim)">No transcript available for this recording.</p></div>';
+        container.style.display = "";
+        return;
+      }
+
+      let html = '<div class="full-transcript"><div class="transcript-header">Transcript</div><div class="transcript-body">';
+      for (const seg of segments) {
+        html += `<div class="transcript-line"><span class="speaker">${esc(seg.speaker)}</span>${esc(seg.text)}</div>`;
+      }
+      html += "</div></div>";
+      container.innerHTML = html;
+      container.style.display = "";
+    }
+
+    function renderSummary(segments, rec) {
+      document.getElementById("summary-loading").style.display = "none";
+      const container = document.getElementById("summary-content");
+
+      if (segments.length === 0) {
+        container.innerHTML = '<div class="summary-card"><p style="color:var(--text-dim)">No transcript data — summary cannot be generated.</p></div>';
+        container.style.display = "";
+        return;
+      }
+
+      // Compute stats
+      const speakers = new Map();
+      let totalWords = 0;
+      for (const seg of segments) {
+        const wordCount = seg.text.split(/\s+/).filter(Boolean).length;
+        totalWords += wordCount;
+        speakers.set(seg.speaker, (speakers.get(seg.speaker) || 0) + wordCount);
+      }
+
+      const sortedSpeakers = [...speakers.entries()].sort((a, b) => b[1] - a[1]);
+      const estimatedMinutes = Math.max(1, Math.round(totalWords / 150));
+
+      // Build a condensed overview from the transcript
+      const overviewSegments = buildOverview(segments);
+
+      let html = "";
+
+      // Stats card
+      html += `
+        <div class="summary-card">
+          <h4>Overview</h4>
+          <div class="stat-grid">
+            <div class="stat-item">
+              <div class="stat-value">${sortedSpeakers.length}</div>
+              <div class="stat-label">Speakers</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-value">${segments.length}</div>
+              <div class="stat-label">Segments</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-value">${totalWords.toLocaleString()}</div>
+              <div class="stat-label">Words</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-value">~${estimatedMinutes}m</div>
+              <div class="stat-label">Est. Duration</div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      // Participants card
+      html += `
+        <div class="summary-card">
+          <h4>Participants</h4>
+          <ul>
+            ${sortedSpeakers.map(([name, count]) => {
+              const pct = Math.round((count / totalWords) * 100);
+              return `<li>${esc(name)} <span style="color:var(--text-dim);font-size:12px">${count} words (${pct}%)</span></li>`;
+            }).join("")}
+          </ul>
+        </div>
+      `;
+
+      // Key points / conversation overview
+      html += `
+        <div class="summary-card">
+          <h4>Conversation Highlights</h4>
+          <ul>
+            ${overviewSegments.map((s) => `<li>${esc(s)}</li>`).join("")}
+          </ul>
+        </div>
+      `;
+
+      container.innerHTML = html;
+      container.style.display = "";
+    }
+
+    function buildOverview(segments) {
+      // Extract notable lines — longer segments that are likely substantive
+      // Group consecutive segments by speaker and pick the longest from each
+      const highlights = [];
+      let currentSpeaker = null;
+      let currentGroup = [];
+
+      const flush = () => {
+        if (currentGroup.length > 0) {
+          // Pick the longest segment from this speaker's group
+          const best = currentGroup.reduce((a, b) => a.text.length > b.text.length ? a : b);
+          if (best.text.split(/\s+/).length >= 4) {
+            highlights.push(`${best.speaker}: "${best.text}"`);
+          }
+        }
+        currentGroup = [];
+      };
+
+      for (const seg of segments) {
+        if (seg.speaker !== currentSpeaker) {
+          flush();
+          currentSpeaker = seg.speaker;
+        }
+        currentGroup.push(seg);
+      }
+      flush();
+
+      // Return up to 8 highlights, evenly distributed
+      if (highlights.length <= 8) return highlights;
+      const step = highlights.length / 8;
+      const result = [];
+      for (let i = 0; i < 8; i++) {
+        result.push(highlights[Math.floor(i * step)]);
+      }
+      return result;
     }
 
     // --- Init ---
