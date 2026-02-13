@@ -33,7 +33,7 @@
     "@recallai/desktop-sdk": "^2.0.3"
   },
   "devDependencies": {
-    "electron": "^33.0.0",
-    "electron-builder": "^25.0.0"
+    "electron": "^35.7.5",
+    "electron-builder": "^26.7.0"
   }
 }
