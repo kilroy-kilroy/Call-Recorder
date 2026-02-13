@@ -3,26 +3,30 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline';" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Anton&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
   <title>Call Recorder</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
     :root {
-      --bg: #0f0f13;
-      --surface: #1a1a24;
-      --surface-hover: #22222f;
-      --border: #2a2a3a;
-      --text: #e4e4ed;
-      --text-dim: #8888a0;
-      --accent: #6c5ce7;
-      --accent-hover: #7d6ff0;
-      --red: #e74c5c;
-      --red-hover: #f05c6c;
+      --bg: #000000;
+      --surface: #111111;
+      --surface-hover: #1a1a1a;
+      --border: #2a2a2a;
+      --text: #f0f0f0;
+      --text-dim: #888888;
+      --accent: #E51B23;
+      --accent-hover: #ff2d35;
+      --red: #E51B23;
+      --red-hover: #ff2d35;
       --green: #2ecc71;
-      --yellow: #f1c40f;
-      --radius: 10px;
-      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --yellow: #FFDE59;
+      --radius: 6px;
+      --font: "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-headline: "Anton", Impact, sans-serif;
     }
 
     body {
@@ -39,15 +43,18 @@
     button, input, select, a, label { -webkit-app-region: no-drag; }
 
     .titlebar {
-      height: 42px;
+      height: 48px;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 13px;
-      font-weight: 600;
-      color: var(--text-dim);
+      font-family: var(--font-headline);
+      font-size: 16px;
+      font-weight: 400;
+      color: var(--accent);
       flex-shrink: 0;
-      letter-spacing: 0.3px;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      border-bottom: 2px solid var(--accent);
     }
 
     .tabs {
@@ -69,7 +76,7 @@
       transition: all 0.15s;
     }
     .tab:hover { color: var(--text); }
-    .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
 
     .content { flex: 1; overflow-y: auto; padding: 24px; }
     .panel { display: none; }
@@ -102,6 +109,7 @@
     .status-banner {
       background: var(--surface);
       border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
       border-radius: var(--radius);
       padding: 16px 20px;
       margin-bottom: 20px;
@@ -125,16 +133,17 @@
     }
 
     .status-text { flex: 1; }
-    .status-text h3 { font-size: 14px; font-weight: 600; margin-bottom: 2px; }
+    .status-text h3 { font-family: var(--font-headline); font-size: 16px; font-weight: 400; margin-bottom: 2px; text-transform: uppercase; letter-spacing: 0.5px; }
     .status-text p { font-size: 12px; color: var(--text-dim); }
 
     /* --- Meeting cards --- */
     .section-title {
-      font-size: 11px;
-      font-weight: 700;
-      color: var(--text-dim);
+      font-family: var(--font-headline);
+      font-size: 14px;
+      font-weight: 400;
+      color: var(--yellow);
       text-transform: uppercase;
-      letter-spacing: 0.8px;
+      letter-spacing: 1.2px;
       margin-bottom: 12px;
       margin-top: 8px;
     }
@@ -169,7 +178,7 @@
     .meeting-icon.unknown { background: #8888a020; color: #8888a0; }
 
     .meeting-info { flex: 1; min-width: 0; }
-    .meeting-name { font-size: 14px; font-weight: 600; margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .meeting-name { font-family: var(--font-headline); font-size: 15px; font-weight: 400; margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: 0.3px; }
     .meeting-meta { font-size: 12px; color: var(--text-dim); }
     .meeting-actions { display: flex; gap: 6px; flex-shrink: 0; }
 
@@ -184,11 +193,12 @@
     }
     .transcript-header {
       padding: 12px 18px;
-      font-size: 12px;
-      font-weight: 700;
-      color: var(--text-dim);
+      font-family: var(--font-headline);
+      font-size: 13px;
+      font-weight: 400;
+      color: var(--yellow);
       text-transform: uppercase;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.8px;
       border-bottom: 1px solid var(--border);
       position: sticky;
       top: 0;
@@ -225,7 +235,7 @@
     }
     .recording-card:hover { background: var(--surface-hover); }
     .recording-info { flex: 1; }
-    .recording-title { font-size: 14px; font-weight: 600; margin-bottom: 2px; }
+    .recording-title { font-family: var(--font-headline); font-size: 15px; font-weight: 400; margin-bottom: 2px; letter-spacing: 0.3px; }
     .recording-meta { font-size: 12px; color: var(--text-dim); }
 
     .empty-state {
@@ -233,7 +243,7 @@
       padding: 60px 20px;
       color: var(--text-dim);
     }
-    .empty-state h3 { font-size: 16px; color: var(--text); margin-bottom: 8px; }
+    .empty-state h3 { font-family: var(--font-headline); font-size: 18px; color: var(--text); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
     .empty-state p { font-size: 13px; }
 
     /* --- Settings --- */
@@ -241,12 +251,13 @@
     .field { margin-bottom: 20px; }
     .field label {
       display: block;
-      font-size: 12px;
-      font-weight: 600;
-      color: var(--text-dim);
+      font-family: var(--font-headline);
+      font-size: 13px;
+      font-weight: 400;
+      color: var(--yellow);
       margin-bottom: 6px;
       text-transform: uppercase;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.8px;
     }
     .field input, .field select {
       width: 100%;
@@ -317,7 +328,7 @@
     }
     .toast.show { transform: translateY(0); opacity: 1; }
     .toast.error { border-color: var(--red); }
-    .toast.success { border-color: var(--green); }
+    .toast.success { border-color: var(--yellow); }
 
     /* --- Recording detail view --- */
     .detail-back {
@@ -364,7 +375,7 @@
       transition: all 0.15s;
     }
     .detail-tab:hover { color: var(--text); background: var(--surface-hover); }
-    .detail-tab.active { color: var(--accent); border-color: var(--accent); background: var(--surface); }
+    .detail-tab.active { color: #fff; border-color: var(--accent); background: var(--accent); }
 
     .detail-panel { display: none; }
     .detail-panel.active { display: block; }
@@ -377,11 +388,12 @@
       margin-bottom: 12px;
     }
     .summary-card h4 {
-      font-size: 12px;
-      font-weight: 700;
-      color: var(--text-dim);
+      font-family: var(--font-headline);
+      font-size: 14px;
+      font-weight: 400;
+      color: var(--yellow);
       text-transform: uppercase;
-      letter-spacing: 0.5px;
+      letter-spacing: 1px;
       margin-bottom: 10px;
     }
     .summary-card p, .summary-card ul {
@@ -419,16 +431,18 @@
       border-radius: var(--radius);
     }
     .stat-value {
-      font-size: 20px;
-      font-weight: 700;
-      color: var(--accent);
+      font-family: var(--font-headline);
+      font-size: 22px;
+      font-weight: 400;
+      color: var(--yellow);
     }
     .stat-label {
+      font-family: var(--font-headline);
       font-size: 11px;
       color: var(--text-dim);
       margin-top: 4px;
       text-transform: uppercase;
-      letter-spacing: 0.3px;
+      letter-spacing: 0.5px;
     }
 
     .full-transcript {
@@ -440,11 +454,12 @@
     }
     .full-transcript .transcript-header {
       padding: 12px 18px;
-      font-size: 12px;
-      font-weight: 700;
-      color: var(--text-dim);
+      font-family: var(--font-headline);
+      font-size: 13px;
+      font-weight: 400;
+      color: var(--yellow);
       text-transform: uppercase;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.8px;
       border-bottom: 1px solid var(--border);
       position: sticky;
       top: 0;
@@ -476,7 +491,7 @@
   </style>
 </head>
 <body>
-  <div class="titlebar">Call Recorder</div>
+  <div class="titlebar">CALL RECORDER</div>
 
   <div class="tabs">
     <button class="tab active" data-tab="live">Live</button>
