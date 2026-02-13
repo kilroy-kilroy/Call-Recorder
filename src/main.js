@@ -220,7 +220,7 @@ async function handleStartRecording(windowId) {
   const recordingConfig = {
     transcript: {
       provider: {
-        meeting_captions: {},
+        recallai_streaming: {},
       },
     },
     realtime_endpoints: [
