@@ -78,6 +78,14 @@ class RecallAPI {
   async getSdkUpload(uploadId) {
     return this._request("GET", `/sdk_upload/${uploadId}/`);
   }
+
+  /**
+   * Retrieve the transcript for a recording.
+   * Returns an array of transcript segments with speaker info and words.
+   */
+  async getTranscript(recordingId) {
+    return this._request("GET", `/recording/${recordingId}/transcript/`);
+  }
 }
 
 module.exports = RecallAPI;

@@ -28,6 +28,7 @@ let mainWindow;
 let recallApi;
 let sdkInitialized = false;
 let activeRecordings = new Map(); // windowId -> { uploadId, uploadToken }
+let liveTranscripts = new Map(); // uploadId -> [{ speaker, text }]
 
 // --- Settings ---
 
@@ -160,12 +161,48 @@ function setupSdkEventListeners() {
         title: evt.window?.title || "",
         endedAt: new Date().toISOString(),
       });
+
+      // Save live transcript to disk
+      const segments = liveTranscripts.get(recording.uploadId);
+      if (segments && segments.length > 0) {
+        const transcriptPath = path.join(
+          app.getPath("userData"),
+          `transcript-${recording.uploadId}.json`
+        );
+        try {
+          fs.writeFileSync(transcriptPath, JSON.stringify(segments, null, 2));
+        } catch {
+          // ignore write errors
+        }
+      }
+      liveTranscripts.delete(recording.uploadId);
+
       activeRecordings.delete(windowId);
     }
   });
 
   RecallAiSdk.addEventListener("realtime-event", (evt) => {
     sendToRenderer("realtime-event", evt);
+
+    // Persist transcript segments locally during recording
+    if (evt && evt.event === "transcript.data") {
+      const words =
+        evt.data?.data?.words?.map((w) => w.text?.trim()).filter(Boolean) || [];
+      if (words.length > 0) {
+        const speaker =
+          evt.data?.data?.participant?.name?.trim() || "Speaker";
+        // Find the uploadId for the current recording
+        for (const [, rec] of activeRecordings) {
+          if (!liveTranscripts.has(rec.uploadId)) {
+            liveTranscripts.set(rec.uploadId, []);
+          }
+          liveTranscripts.get(rec.uploadId).push({
+            speaker,
+            text: words.join(" "),
+          });
+        }
+      }
+    }
   });
 }
 
@@ -362,4 +399,39 @@ ipcMain.handle("download-recording", async (_event, recordingId, name) => {
     };
     fetch(videoUrl);
   });
+});
+
+ipcMain.handle("get-transcript", async (_event, uploadId, recordingId) => {
+  // 1. Try local cached transcript first (captured during live recording)
+  const transcriptPath = path.join(
+    app.getPath("userData"),
+    `transcript-${uploadId}.json`
+  );
+  try {
+    if (fs.existsSync(transcriptPath)) {
+      const segments = JSON.parse(fs.readFileSync(transcriptPath, "utf-8"));
+      return { source: "local", segments };
+    }
+  } catch {
+    // fall through to API
+  }
+
+  // 2. Fetch from Recall.ai API
+  if (!recordingId) {
+    throw new Error("Recording is still processing — transcript not available yet");
+  }
+  const api = getApi();
+  const transcript = await api.getTranscript(recordingId);
+
+  // Normalize API response to the same format as local transcripts
+  const segments = Array.isArray(transcript)
+    ? transcript.map((seg) => ({
+        speaker: seg.speaker || seg.participant?.name || "Speaker",
+        text: Array.isArray(seg.words)
+          ? seg.words.map((w) => w.text || w).join(" ")
+          : seg.text || "",
+      }))
+    : [];
+
+  return { source: "api", segments };
 });

@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld("api", {
   listRecordings: () => ipcRenderer.invoke("list-recordings"),
   downloadRecording: (url, name) =>
     ipcRenderer.invoke("download-recording", url, name),
+  getTranscript: (uploadId, recordingId) =>
+    ipcRenderer.invoke("get-transcript", uploadId, recordingId),
 
   // Events from main process → renderer
   onMeetingDetected: (cb) => {
