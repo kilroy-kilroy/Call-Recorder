@@ -511,6 +511,17 @@
         <button class="btn btn-sm btn-outline" id="btn-permissions" style="display:none">Grant Permissions</button>
       </div>
 
+      <div id="permission-banner" style="display:none">
+        <div class="status-banner" style="border-left-color: var(--yellow)">
+          <div class="status-dot" style="background: var(--yellow); animation: pulse 2s infinite;"></div>
+          <div class="status-text">
+            <h3>Permissions Required</h3>
+            <p id="permission-details">Checking system permissions...</p>
+          </div>
+          <button class="btn btn-sm btn-primary" id="btn-fix-permissions">Grant Permissions</button>
+        </div>
+      </div>
+
       <div id="meetings-section" style="display:none">
         <div class="section-title">Detected Meetings</div>
         <div id="meetings-list"></div>
@@ -531,6 +542,7 @@
       <div id="empty-live" class="empty-state" style="display:none">
         <h3>Waiting for a meeting</h3>
         <p>Open Zoom, Google Meet, or Microsoft Teams — meetings will be detected automatically.</p>
+        <button class="btn btn-sm btn-outline" id="btn-rescan" style="margin-top: 16px">Rescan for Meetings</button>
       </div>
     </div>
 
@@ -735,7 +747,7 @@
 
     async function stopRecording() {
       try {
-        await window.api.stopRecording();
+        await window.api.stopRecording(recordingWindowId);
         showToast("Stopping recording...", "success");
       } catch (err) {
         showToast(err.message || "Failed to stop recording", "error");
@@ -751,6 +763,14 @@
 
     window.api.onMeetingUpdated((data) => {
       detectedMeetings.set(data.windowId, data);
+      renderMeetings();
+    });
+
+    window.api.onMeetingClosed((data) => {
+      detectedMeetings.delete(data.windowId);
+      if (detectedMeetings.size === 0 && !isRecording) {
+        setStatus("listening", "Listening for meetings", "Open a meeting app to get started");
+      }
       renderMeetings();
     });
 
@@ -797,6 +817,44 @@
       showToast(data.message || "SDK error", "error");
     });
 
+    // --- Permission lifecycle ---
+    window.api.onPermissionStatus((data) => {
+      const banner = document.getElementById("permission-banner");
+      const details = document.getElementById("permission-details");
+
+      // Only check the three permissions we care about
+      const required = ["accessibility", "microphone", "screen-capture"];
+      const statuses = data.all || {};
+      const missing = required.filter((p) => {
+        const s = statuses[p];
+        return s !== "granted" && s !== "authorized";
+      });
+
+      if (missing.length > 0) {
+        const statusInfo = missing.map((p) => p + " (" + (statuses[p] || "unknown") + ")").join(", ");
+        banner.style.display = "";
+        details.textContent = "Missing: " + statusInfo;
+        if (!isRecording) {
+          setStatus("idle", "Waiting for permissions", "Grant system permissions to start detecting meetings");
+        }
+      } else {
+        banner.style.display = "none";
+        if (!isRecording) {
+          setStatus("listening", "Listening for meetings", "All permissions granted — scanning for meetings");
+        }
+      }
+    });
+
+    window.api.onPermissionsGranted(() => {
+      document.getElementById("permission-banner").style.display = "none";
+      setStatus("listening", "Listening for meetings", "All permissions granted — scanning for meetings");
+      showToast("All permissions granted!", "success");
+    });
+
+    window.api.onSdkInitialized(() => {
+      setStatus("idle", "Checking permissions...", "Verifying system permissions");
+    });
+
     // --- Permissions ---
     document.getElementById("btn-permissions").addEventListener("click", async () => {
       const result = await window.api.requestPermissions();
@@ -815,6 +873,37 @@
       } else {
         showToast("Permission prompts opened", "success");
       }
+    });
+
+    document.getElementById("btn-fix-permissions").addEventListener("click", async () => {
+      const result = await window.api.requestPermissions();
+      if (result.error) {
+        showToast(result.error, "error");
+      } else {
+        showToast("Permission prompts opened — please grant access in System Settings", "success");
+      }
+    });
+
+    document.getElementById("btn-rescan").addEventListener("click", async () => {
+      const btn = document.getElementById("btn-rescan");
+      btn.disabled = true;
+      btn.textContent = "Scanning...";
+      detectedMeetings.clear();
+      renderMeetings();
+      try {
+        const result = await window.api.rescanMeetings();
+        if (result.error) {
+          showToast(result.error, "error");
+        } else {
+          showToast("Rescanning for meetings...", "success");
+        }
+      } catch (err) {
+        showToast(err.message || "Rescan failed", "error");
+      }
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.textContent = "Rescan for Meetings";
+      }, 3000);
     });
 
     // --- Settings ---
@@ -1110,8 +1199,19 @@
         showToast("Please configure your Recall.ai API key to get started", "");
         return;
       }
-      // SDK will init from main process after page loads
-      setStatus("listening", "Listening for meetings", "Open Zoom, Google Meet, or Microsoft Teams to get started");
+
+      // Check current permission status
+      try {
+        const permStatus = await window.api.getPermissionStatus();
+        if (permStatus.granted) {
+          setStatus("listening", "Listening for meetings", "Open Zoom, Google Meet, or Microsoft Teams to get started");
+        } else {
+          setStatus("idle", "Checking permissions...", "Verifying system permissions");
+        }
+      } catch {
+        setStatus("listening", "Listening for meetings", "Open Zoom, Google Meet, or Microsoft Teams to get started");
+      }
+
       document.getElementById("empty-live").style.display = "";
     })();
   </script>

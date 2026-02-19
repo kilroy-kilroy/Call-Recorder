@@ -21,14 +21,26 @@ try {
   RecallAiSdk = null;
 }
 
-const SETTINGS_PATH = path.join(app.getPath("userData"), "settings.json");
-const RECORDINGS_PATH = path.join(app.getPath("userData"), "recordings.json");
+const USER_DATA_DIR = app.getPath("userData");
+const SETTINGS_PATH = path.join(USER_DATA_DIR, "settings.json");
+const RECORDINGS_PATH = path.join(USER_DATA_DIR, "recordings.json");
+
+// Ensure the userData directory exists — Electron provides the path but
+// does not create it automatically.
+fs.mkdirSync(USER_DATA_DIR, { recursive: true });
 
 let mainWindow;
 let recallApi;
 let sdkInitialized = false;
 let activeRecordings = new Map(); // windowId -> { uploadId, uploadToken }
 let liveTranscripts = new Map(); // uploadId -> [{ speaker, text }]
+let permissionsGranted = false;
+let sdkListenersAttached = false;
+let permissionStatuses = {
+  accessibility: "unknown",
+  microphone: "unknown",
+  "screen-capture": "unknown",
+};
 
 // --- Settings ---
 
@@ -104,9 +116,29 @@ function initSdk() {
   const apiUrl = `https://${settings.region}.recall.ai`;
 
   try {
-    RecallAiSdk.init({ apiUrl });
+    // Register listeners BEFORE init so we don't miss early events.
+    // Only attach once — they survive SDK shutdown/reinit.
+    permissionsGranted = false;
+    permissionStatuses = {
+      accessibility: "unknown",
+      microphone: "unknown",
+      "screen-capture": "unknown",
+    };
+    if (!sdkListenersAttached) {
+      setupSdkEventListeners();
+      sdkListenersAttached = true;
+    }
+
+    RecallAiSdk.init({
+      apiUrl,
+      acquirePermissionsOnStartup: [
+        "accessibility",
+        "microphone",
+        "screen-capture",
+      ],
+    });
     sdkInitialized = true;
-    setupSdkEventListeners();
+    sendToRenderer("sdk-initialized", { permissionsGranted: false });
   } catch (err) {
     sendToRenderer("sdk-error", {
       message: `SDK init failed: ${err.message}`,
@@ -118,8 +150,9 @@ function setupSdkEventListeners() {
   if (!RecallAiSdk) return;
 
   RecallAiSdk.addEventListener("meeting-detected", (evt) => {
+    const windowId = String(evt.window.id);
     sendToRenderer("meeting-detected", {
-      windowId: evt.window.id,
+      windowId,
       platform: evt.window.platform || "unknown",
       title: evt.window.title || "",
       meetingUrl: evt.window.meetingUrl || "",
@@ -128,25 +161,52 @@ function setupSdkEventListeners() {
     // Auto-record if enabled
     const settings = loadSettings();
     if (settings.autoRecord) {
-      handleStartRecording(evt.window.id);
+      handleStartRecording(windowId);
     }
   });
 
   RecallAiSdk.addEventListener("meeting-updated", (evt) => {
     sendToRenderer("meeting-updated", {
-      windowId: evt.window.id,
+      windowId: String(evt.window.id),
       platform: evt.window.platform || "unknown",
       title: evt.window.title || "",
       meetingUrl: evt.window.meetingUrl || "",
     });
   });
 
+  RecallAiSdk.addEventListener("meeting-closed", (evt) => {
+    sendToRenderer("meeting-closed", { windowId: String(evt.window.id) });
+  });
+
   RecallAiSdk.addEventListener("sdk-state-change", (evt) => {
     sendToRenderer("sdk-state-change", evt);
   });
 
+  RecallAiSdk.addEventListener("permission-status", (evt) => {
+    console.log("[SDK] permission-status:", JSON.stringify(evt));
+    const { permission, status } = evt;
+    if (permission in permissionStatuses) {
+      permissionStatuses[permission] = status;
+    }
+    sendToRenderer("permission-status", {
+      permission,
+      status,
+      all: { ...permissionStatuses },
+    });
+  });
+
+  RecallAiSdk.addEventListener("permissions-granted", () => {
+    console.log("[SDK] permissions-granted");
+    permissionsGranted = true;
+    sendToRenderer("permissions-granted", {});
+  });
+
+  RecallAiSdk.addEventListener("log", (evt) => {
+    console.log("[SDK log]", typeof evt === "string" ? evt : JSON.stringify(evt));
+  });
+
   RecallAiSdk.addEventListener("recording-ended", (evt) => {
-    const windowId = evt.window?.id;
+    const windowId = String(evt.window?.id);
     const recording = activeRecordings.get(windowId);
 
     sendToRenderer("recording-ended", {
@@ -213,8 +273,8 @@ function sendToRenderer(channel, data) {
 }
 
 async function handleStartRecording(windowId) {
+  windowId = String(windowId);
   const api = getApi();
-  const settings = loadSettings();
 
   // Create SDK upload with transcript config
   const recordingConfig = {
@@ -296,11 +356,16 @@ ipcMain.handle("get-settings", () => {
   return loadSettings();
 });
 
-ipcMain.handle("save-settings", (_event, settings) => {
+ipcMain.handle("save-settings", async (_event, settings) => {
   saveSettings(settings);
   recallApi = null;
   // Re-initialize SDK with new region if needed
   if (RecallAiSdk && sdkInitialized) {
+    try {
+      await RecallAiSdk.shutdown();
+    } catch {
+      // ignore shutdown errors
+    }
     sdkInitialized = false;
     initSdk();
   }
@@ -321,6 +386,29 @@ ipcMain.handle("request-permissions", async () => {
   }
 });
 
+ipcMain.handle("get-permission-status", () => {
+  return {
+    granted: permissionsGranted,
+    statuses: { ...permissionStatuses },
+  };
+});
+
+ipcMain.handle("rescan-meetings", async () => {
+  if (!RecallAiSdk) {
+    return { error: "Desktop SDK not available on this platform" };
+  }
+  try {
+    if (sdkInitialized) {
+      await RecallAiSdk.shutdown();
+      sdkInitialized = false;
+    }
+    initSdk();
+    return { success: true };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
 ipcMain.handle("start-recording", async (_event, windowId) => {
   if (!RecallAiSdk) {
     throw new Error("Desktop SDK not available on this platform");
@@ -329,12 +417,16 @@ ipcMain.handle("start-recording", async (_event, windowId) => {
   return { success: true };
 });
 
-ipcMain.handle("stop-recording", async () => {
+ipcMain.handle("stop-recording", async (_event, windowId) => {
   if (!RecallAiSdk) {
     throw new Error("Desktop SDK not available on this platform");
   }
   try {
-    await RecallAiSdk.stopRecording();
+    const targetWindowId = windowId ? String(windowId) : activeRecordings.keys().next().value;
+    if (!targetWindowId) {
+      return { error: "No active recording to stop" };
+    }
+    await RecallAiSdk.stopRecording({ windowId: targetWindowId });
     return { success: true };
   } catch (err) {
     return { error: err.message };

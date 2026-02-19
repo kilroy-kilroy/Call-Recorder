@@ -7,8 +7,10 @@ contextBridge.exposeInMainWorld("api", {
 
   // SDK controls
   requestPermissions: () => ipcRenderer.invoke("request-permissions"),
+  getPermissionStatus: () => ipcRenderer.invoke("get-permission-status"),
+  rescanMeetings: () => ipcRenderer.invoke("rescan-meetings"),
   startRecording: (windowId) => ipcRenderer.invoke("start-recording", windowId),
-  stopRecording: () => ipcRenderer.invoke("stop-recording"),
+  stopRecording: (windowId) => ipcRenderer.invoke("stop-recording", windowId),
 
   // Recordings
   listRecordings: () => ipcRenderer.invoke("list-recordings"),
@@ -27,6 +29,11 @@ contextBridge.exposeInMainWorld("api", {
     const handler = (_event, data) => cb(data);
     ipcRenderer.on("meeting-updated", handler);
     return () => ipcRenderer.removeListener("meeting-updated", handler);
+  },
+  onMeetingClosed: (cb) => {
+    const handler = (_event, data) => cb(data);
+    ipcRenderer.on("meeting-closed", handler);
+    return () => ipcRenderer.removeListener("meeting-closed", handler);
   },
   onRecordingStarted: (cb) => {
     const handler = (_event, data) => cb(data);
@@ -52,5 +59,20 @@ contextBridge.exposeInMainWorld("api", {
     const handler = (_event, data) => cb(data);
     ipcRenderer.on("sdk-error", handler);
     return () => ipcRenderer.removeListener("sdk-error", handler);
+  },
+  onPermissionStatus: (cb) => {
+    const handler = (_event, data) => cb(data);
+    ipcRenderer.on("permission-status", handler);
+    return () => ipcRenderer.removeListener("permission-status", handler);
+  },
+  onPermissionsGranted: (cb) => {
+    const handler = (_event, data) => cb(data);
+    ipcRenderer.on("permissions-granted", handler);
+    return () => ipcRenderer.removeListener("permissions-granted", handler);
+  },
+  onSdkInitialized: (cb) => {
+    const handler = (_event, data) => cb(data);
+    ipcRenderer.on("sdk-initialized", handler);
+    return () => ipcRenderer.removeListener("sdk-initialized", handler);
   },
 });
