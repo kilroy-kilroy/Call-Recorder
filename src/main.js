@@ -134,6 +134,11 @@ function initSdk() {
       sdkListenersAttached = true;
     }
 
+    // Notify renderer BEFORE init so any synchronous SDK events
+    // (permission-status, permissions-granted) arrive after this message
+    // and don't get overwritten.
+    sendToRenderer("sdk-initialized", { permissionsGranted: false });
+
     RecallAiSdk.init({
       apiUrl,
       acquirePermissionsOnStartup: [
@@ -143,7 +148,12 @@ function initSdk() {
       ],
     });
     sdkInitialized = true;
-    sendToRenderer("sdk-initialized", { permissionsGranted: false });
+
+    // If the SDK granted permissions synchronously during init(),
+    // re-notify the renderer so it doesn't stay in "Checking" state.
+    if (permissionsGranted) {
+      sendToRenderer("permissions-granted", {});
+    }
   } catch (err) {
     sendToRenderer("sdk-error", {
       message: `SDK init failed: ${err.message}`,

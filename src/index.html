@@ -825,12 +825,15 @@
       // Only check the three permissions we care about
       const required = ["accessibility", "microphone", "screen-capture"];
       const statuses = data.all || {};
+      // A permission is "missing" only if the SDK has actively reported it
+      // as denied / not-yet-determined.  We use a deny-list rather than an
+      // allow-list so that any grant-like status the SDK reports (e.g.
+      // "granted", "authorized", "allowed") is accepted.
+      const deniedSet = new Set(["denied", "not-determined", "not_determined", "restricted"]);
       const missing = required.filter((p) => {
         const s = statuses[p];
-        // Skip permissions the SDK hasn't reported on yet — "unknown" means
-        // the check is still in progress, not that the permission is denied.
         if (!s || s === "unknown") return false;
-        return s !== "granted" && s !== "authorized";
+        return deniedSet.has(s);
       });
 
       if (missing.length > 0) {
@@ -1211,19 +1214,24 @@
         return;
       }
 
-      // Check current permission status
-      try {
-        const permStatus = await window.api.getPermissionStatus();
-        if (permStatus.granted) {
-          setStatus("listening", "Listening for meetings", "Open Zoom, Google Meet, or Microsoft Teams to get started");
-        } else {
-          setStatus("idle", "Checking permissions...", "Verifying system permissions");
-        }
-      } catch {
-        setStatus("listening", "Listening for meetings", "Open Zoom, Google Meet, or Microsoft Teams to get started");
-      }
-
       document.getElementById("empty-live").style.display = "";
+
+      // Fallback: if the SDK never fires permission events (e.g. permissions
+      // were already granted before startup), poll the main process after a
+      // short delay so the UI doesn't stay stuck on "Checking permissions...".
+      setTimeout(async () => {
+        try {
+          const permStatus = await window.api.getPermissionStatus();
+          if (permStatus.granted) {
+            document.getElementById("permission-banner").style.display = "none";
+            if (!isRecording) {
+              setStatus("listening", "Listening for meetings", "All permissions granted — scanning for meetings");
+            }
+          }
+        } catch {
+          // ignore — SDK events will handle it
+        }
+      }, 3000);
     })();
   </script>
 </body>
