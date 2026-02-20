@@ -49,18 +49,23 @@ function loadSettings() {
     if (fs.existsSync(SETTINGS_PATH)) {
       return JSON.parse(fs.readFileSync(SETTINGS_PATH, "utf-8"));
     }
-  } catch {
-    // ignore
+  } catch (err) {
+    console.error("Failed to load settings:", err.message);
   }
   return {
-    apiKey: "db35f9b6084afe226422fe51d30b1137d815b194",
+    apiKey: "",
     region: "us-west-2",
     autoRecord: false,
   };
 }
 
 function saveSettings(settings) {
-  fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2));
+  const data = JSON.stringify(settings, null, 2);
+  // Write to a temp file first, then rename — this prevents corruption if
+  // the process is killed mid-write (rename is atomic on most OSes).
+  const tmpPath = SETTINGS_PATH + ".tmp";
+  fs.writeFileSync(tmpPath, data);
+  fs.renameSync(tmpPath, SETTINGS_PATH);
 }
 
 // --- Local recording history ---
@@ -357,7 +362,11 @@ ipcMain.handle("get-settings", () => {
 });
 
 ipcMain.handle("save-settings", async (_event, settings) => {
-  saveSettings(settings);
+  try {
+    saveSettings(settings);
+  } catch (err) {
+    return { error: `Failed to save settings: ${err.message}` };
+  }
   recallApi = null;
   // Re-initialize SDK with new region if needed
   if (RecallAiSdk && sdkInitialized) {

@@ -920,8 +920,16 @@
         region: document.getElementById("setting-region").value,
         autoRecord: document.getElementById("setting-auto-record").checked,
       };
-      await window.api.saveSettings(settings);
-      showToast("Settings saved", "success");
+      try {
+        const result = await window.api.saveSettings(settings);
+        if (result && result.error) {
+          showToast(result.error, "error");
+        } else {
+          showToast("Settings saved", "success");
+        }
+      } catch (err) {
+        showToast(err.message || "Failed to save settings", "error");
+      }
     });
 
     // --- Recordings ---
