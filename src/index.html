@@ -827,6 +827,9 @@
       const statuses = data.all || {};
       const missing = required.filter((p) => {
         const s = statuses[p];
+        // Skip permissions the SDK hasn't reported on yet — "unknown" means
+        // the check is still in progress, not that the permission is denied.
+        if (!s || s === "unknown") return false;
         return s !== "granted" && s !== "authorized";
       });
 
