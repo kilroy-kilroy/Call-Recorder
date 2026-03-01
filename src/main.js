@@ -1,8 +1,14 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
+const {
+  app,
+  BrowserWindow,
+  ipcMain,
+  dialog,
+  shell,
+  desktopCapturer,
+  systemPreferences,
+} = require("electron");
 const path = require("path");
 const fs = require("fs");
-const https = require("https");
-const RecallAPI = require("./recall-api");
 
 // Suppress EPIPE errors on stdout/stderr (can occur when the launching
 // terminal or parent process closes the pipe while the app is still running).
@@ -13,34 +19,46 @@ process.stderr?.on("error", (err) => {
   if (err.code !== "EPIPE") throw err;
 });
 
-let RecallAiSdk;
+// Try to load electron-audio-loopback for system audio capture.
+let enableLoopback;
 try {
-  RecallAiSdk = require("@recallai/desktop-sdk");
+  enableLoopback = require("electron-audio-loopback");
 } catch {
-  // SDK may not be available on all platforms (e.g. Linux dev)
-  RecallAiSdk = null;
+  enableLoopback = null;
 }
 
 const USER_DATA_DIR = app.getPath("userData");
 const SETTINGS_PATH = path.join(USER_DATA_DIR, "settings.json");
-const RECORDINGS_PATH = path.join(USER_DATA_DIR, "recordings.json");
+const RECORDINGS_DIR = path.join(USER_DATA_DIR, "recordings");
 
-// Ensure the userData directory exists — Electron provides the path but
-// does not create it automatically.
+// Ensure directories exist.
 fs.mkdirSync(USER_DATA_DIR, { recursive: true });
+fs.mkdirSync(RECORDINGS_DIR, { recursive: true });
 
 let mainWindow;
-let recallApi;
-let sdkInitialized = false;
-let activeRecordings = new Map(); // windowId -> { uploadId, uploadToken }
-let liveTranscripts = new Map(); // uploadId -> [{ speaker, text }]
-let permissionsGranted = false;
-let sdkListenersAttached = false;
-let permissionStatuses = {
-  accessibility: "unknown",
-  microphone: "unknown",
-  "screen-capture": "unknown",
-};
+let meetingDetectionInterval = null;
+
+// Meeting detection patterns — window titles that indicate a meeting is active.
+const MEETING_PATTERNS = [
+  {
+    platform: "zoom",
+    // Matches "Zoom Meeting" or "Zoom Webinar" in window title
+    test: (title) => /zoom\s*(meeting|webinar)/i.test(title),
+  },
+  {
+    platform: "google-meet",
+    // Matches "Meet -" or "meet.google.com" in window title
+    test: (title) =>
+      /meet\s*[-–—]|meet\.google\.com/i.test(title),
+  },
+  {
+    platform: "teams",
+    // Matches "Microsoft Teams" meeting indicators
+    test: (title) =>
+      /microsoft teams/i.test(title) &&
+      !/sign in/i.test(title),
+  },
+];
 
 // --- Settings ---
 
@@ -53,27 +71,26 @@ function loadSettings() {
     console.error("Failed to load settings:", err.message);
   }
   return {
-    apiKey: "",
-    region: "us-west-2",
     autoRecord: false,
+    whisperModel: "base",
+    recordingQuality: "standard",
   };
 }
 
 function saveSettings(settings) {
   const data = JSON.stringify(settings, null, 2);
-  // Write to a temp file first, then rename — this prevents corruption if
-  // the process is killed mid-write (rename is atomic on most OSes).
   const tmpPath = SETTINGS_PATH + ".tmp";
   fs.writeFileSync(tmpPath, data);
   fs.renameSync(tmpPath, SETTINGS_PATH);
 }
 
-// --- Local recording history ---
+// --- Recording history (index of all recordings) ---
 
-function loadRecordingHistory() {
+function getRecordingsIndex() {
+  const indexPath = path.join(RECORDINGS_DIR, "index.json");
   try {
-    if (fs.existsSync(RECORDINGS_PATH)) {
-      return JSON.parse(fs.readFileSync(RECORDINGS_PATH, "utf-8"));
+    if (fs.existsSync(indexPath)) {
+      return JSON.parse(fs.readFileSync(indexPath, "utf-8"));
     }
   } catch {
     // ignore
@@ -81,195 +98,96 @@ function loadRecordingHistory() {
   return [];
 }
 
-function saveRecordingHistory(recordings) {
-  fs.writeFileSync(RECORDINGS_PATH, JSON.stringify(recordings, null, 2));
+function saveRecordingsIndex(recordings) {
+  const indexPath = path.join(RECORDINGS_DIR, "index.json");
+  const data = JSON.stringify(recordings, null, 2);
+  const tmpPath = indexPath + ".tmp";
+  fs.writeFileSync(tmpPath, data);
+  fs.renameSync(tmpPath, indexPath);
 }
 
-function addRecordingToHistory(entry) {
-  const recordings = loadRecordingHistory();
+function addRecording(entry) {
+  const recordings = getRecordingsIndex();
   recordings.unshift(entry);
-  // Keep last 100
   if (recordings.length > 100) recordings.length = 100;
-  saveRecordingHistory(recordings);
+  saveRecordingsIndex(recordings);
+  return entry;
 }
 
-// --- API ---
+// --- Meeting detection via desktopCapturer ---
 
-function getApi() {
-  const settings = loadSettings();
-  if (!settings.apiKey) {
-    throw new Error(
-      "API key not configured. Go to Settings to add your Recall.ai API key."
-    );
-  }
-  if (
-    !recallApi ||
-    recallApi.apiKey !== settings.apiKey ||
-    recallApi.baseHost !== `${settings.region}.recall.ai`
-  ) {
-    recallApi = new RecallAPI(settings.apiKey, settings.region);
-  }
-  return recallApi;
-}
+let detectedMeetings = new Map(); // id -> { id, platform, title }
 
-// --- Desktop SDK ---
-
-function initSdk() {
-  if (!RecallAiSdk || sdkInitialized) return;
-
-  const settings = loadSettings();
-  const apiUrl = `https://${settings.region}.recall.ai`;
-
+async function scanForMeetings() {
   try {
-    // Register listeners BEFORE init so we don't miss early events.
-    // Only attach once — they survive SDK shutdown/reinit.
-    permissionsGranted = false;
-    permissionStatuses = {
-      accessibility: "unknown",
-      microphone: "unknown",
-      "screen-capture": "unknown",
-    };
-    if (!sdkListenersAttached) {
-      setupSdkEventListeners();
-      sdkListenersAttached = true;
+    const sources = await desktopCapturer.getSources({
+      types: ["window"],
+      thumbnailSize: { width: 0, height: 0 },
+    });
+
+    const currentIds = new Set();
+
+    for (const source of sources) {
+      const title = source.name || "";
+      for (const pattern of MEETING_PATTERNS) {
+        if (pattern.test(title)) {
+          const id = source.id;
+          currentIds.add(id);
+
+          if (!detectedMeetings.has(id)) {
+            const meeting = {
+              id,
+              platform: pattern.platform,
+              title: title,
+            };
+            detectedMeetings.set(id, meeting);
+            sendToRenderer("meeting-detected", meeting);
+
+            // Auto-record if enabled
+            const settings = loadSettings();
+            if (settings.autoRecord) {
+              sendToRenderer("auto-record-triggered", { meetingId: id });
+            }
+          } else {
+            // Update title if it changed
+            const existing = detectedMeetings.get(id);
+            if (existing.title !== title) {
+              existing.title = title;
+              sendToRenderer("meeting-updated", existing);
+            }
+          }
+          break;
+        }
+      }
     }
 
-    RecallAiSdk.init({
-      apiUrl,
-      acquirePermissionsOnStartup: [
-        "accessibility",
-        "microphone",
-        "screen-capture",
-      ],
-    });
-    sdkInitialized = true;
-    sendToRenderer("sdk-initialized", { permissionsGranted: false });
+    // Detect closed meetings
+    for (const [id] of detectedMeetings) {
+      if (!currentIds.has(id)) {
+        detectedMeetings.delete(id);
+        sendToRenderer("meeting-closed", { id });
+      }
+    }
   } catch (err) {
-    sendToRenderer("sdk-error", {
-      message: `SDK init failed: ${err.message}`,
-    });
+    console.error("Meeting scan error:", err.message);
   }
 }
 
-function setupSdkEventListeners() {
-  if (!RecallAiSdk) return;
-
-  RecallAiSdk.addEventListener("meeting-detected", (evt) => {
-    const windowId = String(evt.window.id);
-    sendToRenderer("meeting-detected", {
-      windowId,
-      platform: evt.window.platform || "unknown",
-      title: evt.window.title || "",
-      meetingUrl: evt.window.meetingUrl || "",
-    });
-
-    // Auto-record if enabled
-    const settings = loadSettings();
-    if (settings.autoRecord) {
-      handleStartRecording(windowId);
-    }
-  });
-
-  RecallAiSdk.addEventListener("meeting-updated", (evt) => {
-    sendToRenderer("meeting-updated", {
-      windowId: String(evt.window.id),
-      platform: evt.window.platform || "unknown",
-      title: evt.window.title || "",
-      meetingUrl: evt.window.meetingUrl || "",
-    });
-  });
-
-  RecallAiSdk.addEventListener("meeting-closed", (evt) => {
-    sendToRenderer("meeting-closed", { windowId: String(evt.window.id) });
-  });
-
-  RecallAiSdk.addEventListener("sdk-state-change", (evt) => {
-    sendToRenderer("sdk-state-change", evt);
-  });
-
-  RecallAiSdk.addEventListener("permission-status", (evt) => {
-    console.log("[SDK] permission-status:", JSON.stringify(evt));
-    const { permission, status } = evt;
-    if (permission in permissionStatuses) {
-      permissionStatuses[permission] = status;
-    }
-    sendToRenderer("permission-status", {
-      permission,
-      status,
-      all: { ...permissionStatuses },
-    });
-  });
-
-  RecallAiSdk.addEventListener("permissions-granted", () => {
-    console.log("[SDK] permissions-granted");
-    permissionsGranted = true;
-    sendToRenderer("permissions-granted", {});
-  });
-
-  RecallAiSdk.addEventListener("log", (evt) => {
-    console.log("[SDK log]", typeof evt === "string" ? evt : JSON.stringify(evt));
-  });
-
-  RecallAiSdk.addEventListener("recording-ended", (evt) => {
-    const windowId = String(evt.window?.id);
-    const recording = activeRecordings.get(windowId);
-
-    sendToRenderer("recording-ended", {
-      windowId,
-      uploadId: recording?.uploadId || null,
-    });
-
-    if (recording) {
-      addRecordingToHistory({
-        uploadId: recording.uploadId,
-        platform: evt.window?.platform || "unknown",
-        title: evt.window?.title || "",
-        endedAt: new Date().toISOString(),
-      });
-
-      // Save live transcript to disk
-      const segments = liveTranscripts.get(recording.uploadId);
-      if (segments && segments.length > 0) {
-        const transcriptPath = path.join(
-          app.getPath("userData"),
-          `transcript-${recording.uploadId}.json`
-        );
-        try {
-          fs.writeFileSync(transcriptPath, JSON.stringify(segments, null, 2));
-        } catch {
-          // ignore write errors
-        }
-      }
-      liveTranscripts.delete(recording.uploadId);
-
-      activeRecordings.delete(windowId);
-    }
-  });
-
-  RecallAiSdk.addEventListener("realtime-event", (evt) => {
-    sendToRenderer("realtime-event", evt);
-
-    // Persist transcript segments locally during recording
-    if (evt && evt.event === "transcript.data") {
-      const words =
-        evt.data?.data?.words?.map((w) => w.text?.trim()).filter(Boolean) || [];
-      if (words.length > 0) {
-        const speaker =
-          evt.data?.data?.participant?.name?.trim() || "Speaker";
-        // Find the uploadId for the current recording
-        for (const [, rec] of activeRecordings) {
-          if (!liveTranscripts.has(rec.uploadId)) {
-            liveTranscripts.set(rec.uploadId, []);
-          }
-          liveTranscripts.get(rec.uploadId).push({
-            speaker,
-            text: words.join(" "),
-          });
-        }
-      }
-    }
-  });
+function startMeetingDetection() {
+  if (meetingDetectionInterval) return;
+  // Scan immediately, then every 4 seconds
+  scanForMeetings();
+  meetingDetectionInterval = setInterval(scanForMeetings, 4000);
 }
+
+function stopMeetingDetection() {
+  if (meetingDetectionInterval) {
+    clearInterval(meetingDetectionInterval);
+    meetingDetectionInterval = null;
+  }
+}
+
+// --- Helpers ---
 
 function sendToRenderer(channel, data) {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -277,48 +195,18 @@ function sendToRenderer(channel, data) {
   }
 }
 
-async function handleStartRecording(windowId) {
-  windowId = String(windowId);
-  const api = getApi();
-
-  // Create SDK upload with transcript config
-  const recordingConfig = {
-    transcript: {
-      provider: {
-        recallai_streaming: {},
-      },
-    },
-    realtime_endpoints: [
-      {
-        type: "desktop_sdk_callback",
-        events: [
-          "transcript.data",
-          "transcript.partial_data",
-          "participant_events.join",
-          "participant_events.speech_on",
-          "participant_events.speech_off",
-        ],
-      },
-    ],
-  };
-
-  const upload = await api.createSdkUpload(recordingConfig);
-
-  activeRecordings.set(windowId, {
-    uploadId: upload.id,
-    uploadToken: upload.upload_token,
-    startedAt: new Date().toISOString(),
-  });
-
-  await RecallAiSdk.startRecording({
-    windowId,
-    uploadToken: upload.upload_token,
-  });
-
-  sendToRenderer("recording-started", {
-    windowId,
-    uploadId: upload.id,
-  });
+function generateRecordingId() {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return (
+    now.getFullYear() +
+    pad(now.getMonth() + 1) +
+    pad(now.getDate()) +
+    "-" +
+    pad(now.getHours()) +
+    pad(now.getMinutes()) +
+    pad(now.getSeconds())
+  );
 }
 
 // --- Window ---
@@ -341,13 +229,25 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, "index.html"));
 
   mainWindow.webContents.on("did-finish-load", () => {
-    initSdk();
+    startMeetingDetection();
+    sendToRenderer("app-ready", {});
   });
+}
+
+// Enable loopback audio if the package is available.
+// Must be called before app.whenReady().
+if (enableLoopback) {
+  try {
+    enableLoopback();
+  } catch (err) {
+    console.error("Failed to enable audio loopback:", err.message);
+  }
 }
 
 app.whenReady().then(createWindow);
 
 app.on("window-all-closed", () => {
+  stopMeetingDetection();
   if (process.platform !== "darwin") app.quit();
 });
 
@@ -361,178 +261,160 @@ ipcMain.handle("get-settings", () => {
   return loadSettings();
 });
 
-ipcMain.handle("save-settings", async (_event, settings) => {
+ipcMain.handle("save-settings", (_event, settings) => {
   try {
     saveSettings(settings);
+    return { success: true };
   } catch (err) {
     return { error: `Failed to save settings: ${err.message}` };
   }
-  recallApi = null;
-  // Re-initialize SDK with new region if needed
-  if (RecallAiSdk && sdkInitialized) {
-    try {
-      await RecallAiSdk.shutdown();
-    } catch {
-      // ignore shutdown errors
-    }
-    sdkInitialized = false;
-    initSdk();
-  }
-  return { success: true };
 });
 
-ipcMain.handle("request-permissions", async () => {
-  if (!RecallAiSdk) {
-    return { error: "Desktop SDK not available on this platform" };
-  }
-  try {
-    RecallAiSdk.requestPermission("accessibility");
-    RecallAiSdk.requestPermission("microphone");
-    RecallAiSdk.requestPermission("screen-capture");
-    return { success: true };
-  } catch (err) {
-    return { error: err.message };
-  }
-});
-
-ipcMain.handle("get-permission-status", () => {
-  return {
-    granted: permissionsGranted,
-    statuses: { ...permissionStatuses },
-  };
+ipcMain.handle("get-detected-meetings", () => {
+  return [...detectedMeetings.values()];
 });
 
 ipcMain.handle("rescan-meetings", async () => {
-  if (!RecallAiSdk) {
-    return { error: "Desktop SDK not available on this platform" };
-  }
-  try {
-    if (sdkInitialized) {
-      await RecallAiSdk.shutdown();
-      sdkInitialized = false;
-    }
-    initSdk();
-    return { success: true };
-  } catch (err) {
-    return { error: err.message };
-  }
+  detectedMeetings.clear();
+  await scanForMeetings();
+  return { meetings: [...detectedMeetings.values()] };
 });
 
-ipcMain.handle("start-recording", async (_event, windowId) => {
-  if (!RecallAiSdk) {
-    throw new Error("Desktop SDK not available on this platform");
-  }
-  await handleStartRecording(windowId);
+// Get available audio/video sources for recording (used by the renderer
+// to create MediaStream via getUserMedia with the desktopCapturer source).
+ipcMain.handle("get-sources", async () => {
+  const sources = await desktopCapturer.getSources({
+    types: ["window", "screen"],
+    thumbnailSize: { width: 0, height: 0 },
+  });
+  return sources.map((s) => ({ id: s.id, name: s.name }));
+});
+
+// Save a recording blob sent from the renderer process.
+ipcMain.handle("save-recording", async (_event, { buffer, meeting, duration }) => {
+  const recId = generateRecordingId();
+  const safeTitle = (meeting.title || meeting.platform || "recording")
+    .replace(/[^a-zA-Z0-9_\- ]/g, "")
+    .substring(0, 60)
+    .trim();
+  const dirName = `${recId}_${safeTitle}`;
+  const recDir = path.join(RECORDINGS_DIR, dirName);
+  fs.mkdirSync(recDir, { recursive: true });
+
+  const audioPath = path.join(recDir, "audio.webm");
+  fs.writeFileSync(audioPath, Buffer.from(buffer));
+
+  const entry = {
+    id: recId,
+    dirName,
+    platform: meeting.platform || "unknown",
+    title: meeting.title || "",
+    recordedAt: new Date().toISOString(),
+    duration: duration || 0,
+    hasAudio: true,
+    hasTranscript: false,
+  };
+
+  const metaPath = path.join(recDir, "metadata.json");
+  fs.writeFileSync(metaPath, JSON.stringify(entry, null, 2));
+
+  addRecording(entry);
+
+  return { success: true, recording: entry };
+});
+
+// Save transcript for a recording.
+ipcMain.handle("save-transcript", (_event, { recordingId, segments }) => {
+  const recordings = getRecordingsIndex();
+  const rec = recordings.find((r) => r.id === recordingId);
+  if (!rec) return { error: "Recording not found" };
+
+  const recDir = path.join(RECORDINGS_DIR, rec.dirName);
+  const transcriptPath = path.join(recDir, "transcript.json");
+  fs.writeFileSync(transcriptPath, JSON.stringify(segments, null, 2));
+
+  rec.hasTranscript = true;
+  saveRecordingsIndex(recordings);
+
   return { success: true };
 });
 
-ipcMain.handle("stop-recording", async (_event, windowId) => {
-  if (!RecallAiSdk) {
-    throw new Error("Desktop SDK not available on this platform");
-  }
+ipcMain.handle("list-recordings", () => {
+  return getRecordingsIndex();
+});
+
+ipcMain.handle("get-transcript", (_event, recordingId) => {
+  const recordings = getRecordingsIndex();
+  const rec = recordings.find((r) => r.id === recordingId);
+  if (!rec) return { segments: [] };
+
+  const transcriptPath = path.join(RECORDINGS_DIR, rec.dirName, "transcript.json");
   try {
-    const targetWindowId = windowId ? String(windowId) : activeRecordings.keys().next().value;
-    if (!targetWindowId) {
-      return { error: "No active recording to stop" };
+    if (fs.existsSync(transcriptPath)) {
+      const segments = JSON.parse(fs.readFileSync(transcriptPath, "utf-8"));
+      return { segments };
     }
-    await RecallAiSdk.stopRecording({ windowId: targetWindowId });
-    return { success: true };
-  } catch (err) {
-    return { error: err.message };
+  } catch {
+    // ignore
   }
+  return { segments: [] };
 });
 
-ipcMain.handle("list-recordings", async () => {
-  const history = loadRecordingHistory();
-  const api = getApi();
+ipcMain.handle("export-recording", async (_event, recordingId) => {
+  const recordings = getRecordingsIndex();
+  const rec = recordings.find((r) => r.id === recordingId);
+  if (!rec) throw new Error("Recording not found");
 
-  // Enrich with download URLs from the API
-  const enriched = [];
-  for (const entry of history.slice(0, 20)) {
-    try {
-      const upload = await api.getSdkUpload(entry.uploadId);
-      enriched.push({
-        ...entry,
-        status: upload.status?.code || "unknown",
-        recordingId: upload.recording_id || null,
-      });
-    } catch {
-      enriched.push({ ...entry, status: "unknown", recordingId: null });
-    }
-  }
-  return enriched;
-});
-
-ipcMain.handle("download-recording", async (_event, recordingId, name) => {
-  const api = getApi();
-  const recording = await api.getRecording(recordingId);
-
-  const videoUrl =
-    recording.media_shortcuts?.video_mixed?.data?.download_url || null;
-  if (!videoUrl) {
-    throw new Error("No video recording available yet");
-  }
+  const audioPath = path.join(RECORDINGS_DIR, rec.dirName, "audio.webm");
+  if (!fs.existsSync(audioPath)) throw new Error("Audio file not found");
 
   const { filePath } = await dialog.showSaveDialog(mainWindow, {
-    defaultPath: `${name || "recording"}.mp4`,
-    filters: [{ name: "Video", extensions: ["mp4"] }],
+    defaultPath: `${rec.title || "recording"}.webm`,
+    filters: [{ name: "Audio", extensions: ["webm"] }],
   });
 
   if (!filePath) return { cancelled: true };
 
-  return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(filePath);
-    const fetch = (url) => {
-      https
-        .get(url, (res) => {
-          if (res.statusCode === 301 || res.statusCode === 302) {
-            fetch(res.headers.location);
-            return;
-          }
-          res.pipe(file);
-          file.on("finish", () => {
-            file.close();
-            shell.showItemInFolder(filePath);
-            resolve({ success: true, path: filePath });
-          });
-        })
-        .on("error", reject);
-    };
-    fetch(videoUrl);
-  });
+  fs.copyFileSync(audioPath, filePath);
+  shell.showItemInFolder(filePath);
+  return { success: true, path: filePath };
 });
 
-ipcMain.handle("get-transcript", async (_event, uploadId, recordingId) => {
-  // 1. Try local cached transcript first (captured during live recording)
-  const transcriptPath = path.join(
-    app.getPath("userData"),
-    `transcript-${uploadId}.json`
-  );
+ipcMain.handle("delete-recording", (_event, recordingId) => {
+  const recordings = getRecordingsIndex();
+  const idx = recordings.findIndex((r) => r.id === recordingId);
+  if (idx === -1) return { error: "Recording not found" };
+
+  const rec = recordings[idx];
+  const recDir = path.join(RECORDINGS_DIR, rec.dirName);
+
+  // Remove directory and contents
   try {
-    if (fs.existsSync(transcriptPath)) {
-      const segments = JSON.parse(fs.readFileSync(transcriptPath, "utf-8"));
-      return { source: "local", segments };
-    }
+    fs.rmSync(recDir, { recursive: true, force: true });
   } catch {
-    // fall through to API
+    // ignore cleanup errors
   }
 
-  // 2. Fetch from Recall.ai API
-  if (!recordingId) {
-    throw new Error("Recording is still processing — transcript not available yet");
+  recordings.splice(idx, 1);
+  saveRecordingsIndex(recordings);
+
+  return { success: true };
+});
+
+ipcMain.handle("open-recordings-folder", () => {
+  shell.openPath(RECORDINGS_DIR);
+  return { success: true };
+});
+
+ipcMain.handle("get-mic-permission", async () => {
+  if (process.platform === "darwin") {
+    const status = systemPreferences.getMediaAccessStatus("microphone");
+    if (status !== "granted") {
+      const granted = await systemPreferences.askForMediaAccess("microphone");
+      return { granted };
+    }
+    return { granted: true };
   }
-  const api = getApi();
-  const transcript = await api.getTranscript(recordingId);
-
-  // Normalize API response to the same format as local transcripts
-  const segments = Array.isArray(transcript)
-    ? transcript.map((seg) => ({
-        speaker: seg.speaker || seg.participant?.name || "Speaker",
-        text: Array.isArray(seg.words)
-          ? seg.words.map((w) => w.text || w).join(" ")
-          : seg.text || "",
-      }))
-    : [];
-
-  return { source: "api", segments };
+  // On Windows/Linux, microphone access is typically always available
+  return { granted: true };
 });

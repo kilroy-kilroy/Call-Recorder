@@ -5,21 +5,26 @@ contextBridge.exposeInMainWorld("api", {
   getSettings: () => ipcRenderer.invoke("get-settings"),
   saveSettings: (settings) => ipcRenderer.invoke("save-settings", settings),
 
-  // SDK controls
-  requestPermissions: () => ipcRenderer.invoke("request-permissions"),
-  getPermissionStatus: () => ipcRenderer.invoke("get-permission-status"),
+  // Meeting detection
+  getDetectedMeetings: () => ipcRenderer.invoke("get-detected-meetings"),
   rescanMeetings: () => ipcRenderer.invoke("rescan-meetings"),
-  startRecording: (windowId) => ipcRenderer.invoke("start-recording", windowId),
-  stopRecording: (windowId) => ipcRenderer.invoke("stop-recording", windowId),
 
-  // Recordings
+  // Recording (audio capture happens in the renderer via MediaRecorder)
+  getSources: () => ipcRenderer.invoke("get-sources"),
+  saveRecording: (data) => ipcRenderer.invoke("save-recording", data),
+  saveTranscript: (data) => ipcRenderer.invoke("save-transcript", data),
+
+  // Recording management
   listRecordings: () => ipcRenderer.invoke("list-recordings"),
-  downloadRecording: (url, name) =>
-    ipcRenderer.invoke("download-recording", url, name),
-  getTranscript: (uploadId, recordingId) =>
-    ipcRenderer.invoke("get-transcript", uploadId, recordingId),
+  getTranscript: (recordingId) => ipcRenderer.invoke("get-transcript", recordingId),
+  exportRecording: (recordingId) => ipcRenderer.invoke("export-recording", recordingId),
+  deleteRecording: (recordingId) => ipcRenderer.invoke("delete-recording", recordingId),
+  openRecordingsFolder: () => ipcRenderer.invoke("open-recordings-folder"),
 
-  // Events from main process → renderer
+  // Permissions
+  getMicPermission: () => ipcRenderer.invoke("get-mic-permission"),
+
+  // Events from main process
   onMeetingDetected: (cb) => {
     const handler = (_event, data) => cb(data);
     ipcRenderer.on("meeting-detected", handler);
@@ -35,44 +40,14 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.on("meeting-closed", handler);
     return () => ipcRenderer.removeListener("meeting-closed", handler);
   },
-  onRecordingStarted: (cb) => {
+  onAppReady: (cb) => {
     const handler = (_event, data) => cb(data);
-    ipcRenderer.on("recording-started", handler);
-    return () => ipcRenderer.removeListener("recording-started", handler);
+    ipcRenderer.on("app-ready", handler);
+    return () => ipcRenderer.removeListener("app-ready", handler);
   },
-  onRecordingEnded: (cb) => {
+  onAutoRecordTriggered: (cb) => {
     const handler = (_event, data) => cb(data);
-    ipcRenderer.on("recording-ended", handler);
-    return () => ipcRenderer.removeListener("recording-ended", handler);
-  },
-  onRealtimeEvent: (cb) => {
-    const handler = (_event, data) => cb(data);
-    ipcRenderer.on("realtime-event", handler);
-    return () => ipcRenderer.removeListener("realtime-event", handler);
-  },
-  onSdkStateChange: (cb) => {
-    const handler = (_event, data) => cb(data);
-    ipcRenderer.on("sdk-state-change", handler);
-    return () => ipcRenderer.removeListener("sdk-state-change", handler);
-  },
-  onError: (cb) => {
-    const handler = (_event, data) => cb(data);
-    ipcRenderer.on("sdk-error", handler);
-    return () => ipcRenderer.removeListener("sdk-error", handler);
-  },
-  onPermissionStatus: (cb) => {
-    const handler = (_event, data) => cb(data);
-    ipcRenderer.on("permission-status", handler);
-    return () => ipcRenderer.removeListener("permission-status", handler);
-  },
-  onPermissionsGranted: (cb) => {
-    const handler = (_event, data) => cb(data);
-    ipcRenderer.on("permissions-granted", handler);
-    return () => ipcRenderer.removeListener("permissions-granted", handler);
-  },
-  onSdkInitialized: (cb) => {
-    const handler = (_event, data) => cb(data);
-    ipcRenderer.on("sdk-initialized", handler);
-    return () => ipcRenderer.removeListener("sdk-initialized", handler);
+    ipcRenderer.on("auto-record-triggered", handler);
+    return () => ipcRenderer.removeListener("auto-record-triggered", handler);
   },
 });

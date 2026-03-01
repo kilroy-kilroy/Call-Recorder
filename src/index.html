@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline';" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; media-src 'self' blob:;" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Anton&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -182,44 +182,13 @@
     .meeting-meta { font-size: 12px; color: var(--text-dim); }
     .meeting-actions { display: flex; gap: 6px; flex-shrink: 0; }
 
-    /* --- Transcript --- */
-    .transcript-section {
-      margin-top: 20px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      max-height: 300px;
-      overflow-y: auto;
-    }
-    .transcript-header {
-      padding: 12px 18px;
+    /* --- Recording timer --- */
+    .rec-timer {
       font-family: var(--font-headline);
-      font-size: 13px;
-      font-weight: 400;
-      color: var(--yellow);
-      text-transform: uppercase;
-      letter-spacing: 0.8px;
-      border-bottom: 1px solid var(--border);
-      position: sticky;
-      top: 0;
-      background: var(--surface);
-    }
-    .transcript-body { padding: 8px 0; }
-    .transcript-line {
-      padding: 6px 18px;
-      font-size: 13px;
-      line-height: 1.5;
-    }
-    .transcript-line .speaker {
-      font-weight: 600;
-      color: var(--accent);
-      margin-right: 6px;
-    }
-    .transcript-empty {
-      padding: 20px 18px;
-      font-size: 13px;
-      color: var(--text-dim);
-      text-align: center;
+      font-size: 20px;
+      color: var(--red);
+      letter-spacing: 1px;
+      margin-left: 12px;
     }
 
     /* --- Recordings list --- */
@@ -477,6 +446,20 @@
       margin-right: 6px;
     }
 
+    /* --- Audio player --- */
+    .audio-player {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      margin-bottom: 12px;
+    }
+    .audio-player audio {
+      width: 100%;
+      height: 36px;
+      outline: none;
+    }
+
     .loading-spinner {
       text-align: center;
       padding: 40px;
@@ -505,20 +488,8 @@
       <div class="status-banner" id="status-banner">
         <div class="status-dot idle" id="status-dot"></div>
         <div class="status-text">
-          <h3 id="status-title">Initializing...</h3>
-          <p id="status-desc">Starting the Desktop Recording SDK</p>
-        </div>
-        <button class="btn btn-sm btn-outline" id="btn-permissions" style="display:none">Grant Permissions</button>
-      </div>
-
-      <div id="permission-banner" style="display:none">
-        <div class="status-banner" style="border-left-color: var(--yellow)">
-          <div class="status-dot" style="background: var(--yellow); animation: pulse 2s infinite;"></div>
-          <div class="status-text">
-            <h3>Permissions Required</h3>
-            <p id="permission-details">Checking system permissions...</p>
-          </div>
-          <button class="btn btn-sm btn-primary" id="btn-fix-permissions">Grant Permissions</button>
+          <h3 id="status-title">Starting up...</h3>
+          <p id="status-desc">Initializing meeting detection</p>
         </div>
       </div>
 
@@ -530,19 +501,15 @@
       <div id="recording-section" style="display:none">
         <div class="section-title">Recording</div>
         <div id="recording-info"></div>
-
-        <div class="transcript-section" id="transcript-section">
-          <div class="transcript-header">Live Transcript</div>
-          <div class="transcript-body" id="transcript-body">
-            <div class="transcript-empty" id="transcript-empty">Waiting for speech...</div>
-          </div>
-        </div>
       </div>
 
       <div id="empty-live" class="empty-state" style="display:none">
         <h3>Waiting for a meeting</h3>
         <p>Open Zoom, Google Meet, or Microsoft Teams — meetings will be detected automatically.</p>
-        <button class="btn btn-sm btn-outline" id="btn-rescan" style="margin-top: 16px">Rescan for Meetings</button>
+        <div style="margin-top: 16px; display: flex; gap: 8px; justify-content: center;">
+          <button class="btn btn-sm btn-outline" id="btn-rescan">Rescan for Meetings</button>
+          <button class="btn btn-sm btn-primary" id="btn-manual-record">Record Without Meeting</button>
+        </div>
       </div>
     </div>
 
@@ -550,18 +517,24 @@
     <div class="panel" id="panel-recordings">
       <!-- List view -->
       <div id="recordings-list-view">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+          <div class="section-title" style="margin:0">Your Recordings</div>
+          <button class="btn btn-sm btn-outline" id="btn-open-folder">Open Folder</button>
+        </div>
         <div id="recordings-list"></div>
         <div id="empty-recordings" class="empty-state">
           <h3>No recordings yet</h3>
-          <p>Completed recordings will appear here.</p>
+          <p>Record a meeting to see it here. All recordings are stored locally on your machine.</p>
         </div>
       </div>
 
-      <!-- Detail view (transcript + summary) -->
+      <!-- Detail view -->
       <div id="recording-detail-view" style="display:none">
         <button class="detail-back" id="detail-back-btn">&larr; Back to recordings</button>
 
         <div class="detail-header" id="detail-header"></div>
+
+        <div id="detail-audio-player"></div>
 
         <div class="detail-tabs">
           <button class="detail-tab active" data-dtab="summary">Summary</button>
@@ -583,21 +556,7 @@
     <!-- SETTINGS -->
     <div class="panel" id="panel-settings">
       <div class="settings-form">
-        <div class="field">
-          <label>Recall.ai API Key</label>
-          <input type="password" id="setting-api-key" placeholder="Enter your API key" />
-        </div>
-        <div class="field">
-          <label>Region</label>
-          <select id="setting-region">
-            <option value="us-west-2">US West (us-west-2) — Pay-as-you-go</option>
-            <option value="us-east-1">US East (us-east-1)</option>
-            <option value="eu-central-1">EU (eu-central-1)</option>
-            <option value="ap-northeast-1">Japan (ap-northeast-1)</option>
-          </select>
-        </div>
-
-        <div class="section-title" style="margin-top:24px">Behavior</div>
+        <div class="section-title">Behavior</div>
         <div class="toggle-row">
           <div>
             <div class="toggle-label">Auto-record meetings</div>
@@ -609,9 +568,25 @@
           </label>
         </div>
 
+        <div class="section-title" style="margin-top:24px">Recording</div>
+        <div class="field">
+          <label>Audio Quality</label>
+          <select id="setting-quality">
+            <option value="standard">Standard (128 kbps)</option>
+            <option value="high">High (256 kbps)</option>
+          </select>
+        </div>
+
+        <div class="section-title" style="margin-top:24px">Storage</div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button class="btn btn-sm btn-outline" id="btn-settings-open-folder">Open Recordings Folder</button>
+        </div>
+        <p style="font-size:12px; color:var(--text-dim); margin-top:8px;">
+          Recordings are saved locally on your machine. No cloud upload, no API keys needed.
+        </p>
+
         <div style="margin-top:24px">
           <button class="btn btn-primary" id="btn-save-settings">Save Settings</button>
-          <button class="btn btn-outline" id="btn-grant-permissions" style="margin-left:8px">Grant System Permissions</button>
         </div>
       </div>
     </div>
@@ -621,9 +596,14 @@
 
   <script>
     // --- State ---
-    const detectedMeetings = new Map(); // windowId -> meeting info
+    const detectedMeetings = new Map();
     let isRecording = false;
-    let recordingWindowId = null;
+    let recordingMeetingId = null;
+    let mediaRecorder = null;
+    let recordedChunks = [];
+    let recordingStartTime = null;
+    let timerInterval = null;
+    let currentRecordingMeeting = null; // meeting info for the active recording
 
     // --- Tabs ---
     document.querySelectorAll(".tab").forEach((tab) => {
@@ -660,6 +640,15 @@
       return { cls: "unknown", letter: "M" };
     }
 
+    function formatDuration(ms) {
+      const totalSec = Math.floor(ms / 1000);
+      const h = Math.floor(totalSec / 3600);
+      const m = Math.floor((totalSec % 3600) / 60);
+      const s = totalSec % 60;
+      const pad = (n) => String(n).padStart(2, "0");
+      return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+    }
+
     // --- Status ---
     function setStatus(state, title, desc) {
       const dot = document.getElementById("status-dot");
@@ -690,7 +679,7 @@
       section.style.display = "";
       list.innerHTML = "";
 
-      for (const [windowId, meeting] of detectedMeetings) {
+      for (const [meetingId, meeting] of detectedMeetings) {
         const icon = platformIcon(meeting.platform);
         const card = document.createElement("div");
         card.className = "meeting-card";
@@ -698,41 +687,126 @@
           <div class="meeting-icon ${icon.cls}">${icon.letter}</div>
           <div class="meeting-info">
             <div class="meeting-name">${esc(meeting.title || meeting.platform || "Meeting")}</div>
-            <div class="meeting-meta">${esc(meeting.platform)} ${meeting.meetingUrl ? "· " + esc(meeting.meetingUrl).substring(0, 40) : ""}</div>
+            <div class="meeting-meta">${esc(meeting.platform)}</div>
           </div>
           <div class="meeting-actions">
-            <button class="btn btn-sm btn-primary" data-record="${esc(windowId)}">Record</button>
+            <button class="btn btn-sm btn-primary" data-record="${esc(meetingId)}">Record</button>
           </div>
         `;
         list.appendChild(card);
       }
 
       list.querySelectorAll("[data-record]").forEach((btn) => {
-        btn.addEventListener("click", () => startRecording(btn.dataset.record));
+        btn.addEventListener("click", () => {
+          const mid = btn.dataset.record;
+          const meeting = detectedMeetings.get(mid);
+          startRecording(mid, meeting);
+        });
       });
     }
 
-    async function startRecording(windowId) {
+    // --- Audio capture & recording ---
+    async function startRecording(meetingId, meeting) {
       try {
-        await window.api.startRecording(windowId);
+        // Request microphone permission
+        await window.api.getMicPermission();
+
+        // Build constraints for audio capture.
+        // We capture both system audio (loopback) and microphone.
+        const constraints = { audio: true, video: false };
+
+        // Try to get system audio via desktopCapturer (loopback)
+        let systemStream = null;
+        try {
+          systemStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              mandatory: {
+                chromeMediaSource: "desktop",
+              },
+            },
+            video: {
+              mandatory: {
+                chromeMediaSource: "desktop",
+                maxWidth: 1,
+                maxHeight: 1,
+              },
+            },
+          });
+          // Remove the tiny video track — we only want audio
+          systemStream.getVideoTracks().forEach((t) => t.stop());
+        } catch {
+          // System audio loopback not available — fall back to mic only
+          console.log("System audio loopback not available, using mic only");
+        }
+
+        // Get microphone stream
+        let micStream = null;
+        try {
+          micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch (err) {
+          showToast("Microphone access denied — cannot record", "error");
+          return;
+        }
+
+        // Mix streams if we have both
+        let recordingStream;
+        if (systemStream && systemStream.getAudioTracks().length > 0) {
+          const ctx = new AudioContext();
+          const dest = ctx.createMediaStreamDestination();
+
+          const sysSource = ctx.createMediaStreamSource(systemStream);
+          sysSource.connect(dest);
+
+          const micSource = ctx.createMediaStreamSource(micStream);
+          micSource.connect(dest);
+
+          recordingStream = dest.stream;
+        } else {
+          recordingStream = micStream;
+        }
+
+        // Determine bitrate from settings
+        const settings = await window.api.getSettings();
+        const bitsPerSecond = settings.recordingQuality === "high" ? 256000 : 128000;
+
+        // Start MediaRecorder
+        recordedChunks = [];
+        mediaRecorder = new MediaRecorder(recordingStream, {
+          mimeType: "audio/webm;codecs=opus",
+          audioBitsPerSecond: bitsPerSecond,
+        });
+
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) recordedChunks.push(e.data);
+        };
+
+        mediaRecorder.onstop = async () => {
+          await finalizeRecording();
+        };
+
+        mediaRecorder.start(1000); // Collect data every second
+
+        // Update state
         isRecording = true;
-        recordingWindowId = windowId;
-        const meeting = detectedMeetings.get(windowId);
-        setStatus("recording", "Recording", `${meeting?.platform || "Meeting"} — ${meeting?.title || ""}`);
+        recordingMeetingId = meetingId;
+        recordingStartTime = Date.now();
+        currentRecordingMeeting = meeting || { platform: "unknown", title: "Manual Recording" };
+
+        setStatus("recording", "Recording", `${currentRecordingMeeting.platform || "Meeting"} — ${currentRecordingMeeting.title || ""}`);
 
         document.getElementById("meetings-section").style.display = "none";
         document.getElementById("recording-section").style.display = "";
-        document.getElementById("transcript-body").innerHTML =
-          '<div class="transcript-empty" id="transcript-empty">Waiting for speech...</div>';
+        document.getElementById("empty-live").style.display = "none";
 
-        const icon = platformIcon(meeting?.platform);
+        const icon = platformIcon(currentRecordingMeeting.platform);
         document.getElementById("recording-info").innerHTML = `
           <div class="meeting-card">
             <div class="meeting-icon ${icon.cls}">${icon.letter}</div>
             <div class="meeting-info">
-              <div class="meeting-name">${esc(meeting?.title || meeting?.platform || "Meeting")}</div>
+              <div class="meeting-name">${esc(currentRecordingMeeting.title || currentRecordingMeeting.platform || "Recording")}</div>
               <div class="meeting-meta">Recording in progress</div>
             </div>
+            <span class="rec-timer" id="rec-timer">00:00</span>
             <div class="meeting-actions">
               <button class="btn btn-sm btn-danger" id="btn-stop">Stop Recording</button>
             </div>
@@ -740,150 +814,107 @@
         `;
 
         document.getElementById("btn-stop").addEventListener("click", stopRecording);
+
+        // Start timer
+        timerInterval = setInterval(() => {
+          const elapsed = Date.now() - recordingStartTime;
+          const timerEl = document.getElementById("rec-timer");
+          if (timerEl) timerEl.textContent = formatDuration(elapsed);
+        }, 1000);
+
       } catch (err) {
         showToast(err.message || "Failed to start recording", "error");
       }
     }
 
-    async function stopRecording() {
-      try {
-        await window.api.stopRecording(recordingWindowId);
-        showToast("Stopping recording...", "success");
-      } catch (err) {
-        showToast(err.message || "Failed to stop recording", "error");
+    function stopRecording() {
+      if (mediaRecorder && mediaRecorder.state !== "inactive") {
+        mediaRecorder.stop();
+        // Stop all tracks
+        mediaRecorder.stream.getTracks().forEach((t) => t.stop());
+      }
+      if (timerInterval) {
+        clearInterval(timerInterval);
+        timerInterval = null;
       }
     }
 
-    // --- SDK Events ---
+    async function finalizeRecording() {
+      const duration = Date.now() - recordingStartTime;
+      const blob = new Blob(recordedChunks, { type: "audio/webm;codecs=opus" });
+      const arrayBuffer = await blob.arrayBuffer();
+
+      try {
+        const result = await window.api.saveRecording({
+          buffer: arrayBuffer,
+          meeting: currentRecordingMeeting || { platform: "unknown", title: "Recording" },
+          duration,
+        });
+
+        if (result.success) {
+          showToast("Recording saved! Check the Recordings tab.", "success");
+        }
+      } catch (err) {
+        showToast(err.message || "Failed to save recording", "error");
+      }
+
+      // Reset state
+      isRecording = false;
+      recordingMeetingId = null;
+      mediaRecorder = null;
+      recordedChunks = [];
+      recordingStartTime = null;
+      currentRecordingMeeting = null;
+
+      document.getElementById("recording-section").style.display = "none";
+      setStatus("listening", "Listening for meetings", "Open Zoom, Google Meet, or Microsoft Teams to get started");
+      renderMeetings();
+    }
+
+    // --- Meeting events from main process ---
     window.api.onMeetingDetected((data) => {
-      detectedMeetings.set(data.windowId, data);
+      detectedMeetings.set(data.id, data);
       setStatus("listening", "Meeting detected", `${data.platform} — ${data.title || "Waiting to record"}`);
       renderMeetings();
     });
 
     window.api.onMeetingUpdated((data) => {
-      detectedMeetings.set(data.windowId, data);
+      detectedMeetings.set(data.id, data);
       renderMeetings();
     });
 
     window.api.onMeetingClosed((data) => {
-      detectedMeetings.delete(data.windowId);
+      detectedMeetings.delete(data.id);
+      // If we're recording this meeting, stop the recording
+      if (isRecording && recordingMeetingId === data.id) {
+        showToast("Meeting ended — stopping recording", "success");
+        stopRecording();
+      }
       if (detectedMeetings.size === 0 && !isRecording) {
         setStatus("listening", "Listening for meetings", "Open a meeting app to get started");
       }
       renderMeetings();
     });
 
-    window.api.onRecordingStarted((data) => {
-      isRecording = true;
-      recordingWindowId = data.windowId;
-    });
-
-    window.api.onRecordingEnded((data) => {
-      isRecording = false;
-      recordingWindowId = null;
-      document.getElementById("recording-section").style.display = "none";
-      setStatus("listening", "Listening for meetings", "Open a meeting app to get started");
-      detectedMeetings.delete(data.windowId);
-      renderMeetings();
-      showToast("Recording complete! Check the Recordings tab.", "success");
-    });
-
-    window.api.onRealtimeEvent((evt) => {
-      if (!evt || evt.event !== "transcript.data") return;
-
-      const words = evt.data?.data?.words?.map((w) => w.text?.trim()).filter(Boolean) || [];
-      if (words.length === 0) return;
-
-      const speaker = evt.data?.data?.participant?.name?.trim() || "Speaker";
-      const body = document.getElementById("transcript-body");
-      const empty = document.getElementById("transcript-empty");
-      if (empty) empty.remove();
-
-      const line = document.createElement("div");
-      line.className = "transcript-line";
-      line.innerHTML = `<span class="speaker">${esc(speaker)}</span>${esc(words.join(" "))}`;
-      body.appendChild(line);
-      line.scrollIntoView({ behavior: "smooth", block: "end" });
-    });
-
-    window.api.onSdkStateChange((data) => {
-      if (!isRecording && detectedMeetings.size === 0) {
-        setStatus("listening", "Listening for meetings", "Open a meeting app to get started");
+    window.api.onAutoRecordTriggered((data) => {
+      const meeting = detectedMeetings.get(data.meetingId);
+      if (meeting && !isRecording) {
+        showToast("Auto-recording started", "success");
+        startRecording(data.meetingId, meeting);
       }
     });
 
-    window.api.onError((data) => {
-      showToast(data.message || "SDK error", "error");
+    window.api.onAppReady(() => {
+      setStatus("listening", "Listening for meetings", "Open Zoom, Google Meet, or Microsoft Teams to get started");
+      document.getElementById("empty-live").style.display = "";
     });
 
-    // --- Permission lifecycle ---
-    window.api.onPermissionStatus((data) => {
-      const banner = document.getElementById("permission-banner");
-      const details = document.getElementById("permission-details");
-
-      // Only check the three permissions we care about
-      const required = ["accessibility", "microphone", "screen-capture"];
-      const statuses = data.all || {};
-      const missing = required.filter((p) => {
-        const s = statuses[p];
-        return s !== "granted" && s !== "authorized";
-      });
-
-      if (missing.length > 0) {
-        const statusInfo = missing.map((p) => p + " (" + (statuses[p] || "unknown") + ")").join(", ");
-        banner.style.display = "";
-        details.textContent = "Missing: " + statusInfo;
-        if (!isRecording) {
-          setStatus("idle", "Waiting for permissions", "Grant system permissions to start detecting meetings");
-        }
-      } else {
-        banner.style.display = "none";
-        if (!isRecording) {
-          setStatus("listening", "Listening for meetings", "All permissions granted — scanning for meetings");
-        }
-      }
+    // --- Manual recording (no meeting detected) ---
+    document.getElementById("btn-manual-record").addEventListener("click", () => {
+      startRecording("manual", { platform: "unknown", title: "Manual Recording" });
     });
 
-    window.api.onPermissionsGranted(() => {
-      document.getElementById("permission-banner").style.display = "none";
-      setStatus("listening", "Listening for meetings", "All permissions granted — scanning for meetings");
-      showToast("All permissions granted!", "success");
-    });
-
-    window.api.onSdkInitialized(() => {
-      setStatus("idle", "Checking permissions...", "Verifying system permissions");
-    });
-
-    // --- Permissions ---
-    document.getElementById("btn-permissions").addEventListener("click", async () => {
-      const result = await window.api.requestPermissions();
-      if (result.error) {
-        showToast(result.error, "error");
-      } else {
-        showToast("Permission prompts opened — please grant access", "success");
-        document.getElementById("btn-permissions").style.display = "none";
-      }
-    });
-
-    document.getElementById("btn-grant-permissions").addEventListener("click", async () => {
-      const result = await window.api.requestPermissions();
-      if (result.error) {
-        showToast(result.error, "error");
-      } else {
-        showToast("Permission prompts opened", "success");
-      }
-    });
-
-    document.getElementById("btn-fix-permissions").addEventListener("click", async () => {
-      const result = await window.api.requestPermissions();
-      if (result.error) {
-        showToast(result.error, "error");
-      } else {
-        showToast("Permission prompts opened — please grant access in System Settings", "success");
-      }
-    });
-
+    // --- Rescan ---
     document.getElementById("btn-rescan").addEventListener("click", async () => {
       const btn = document.getElementById("btn-rescan");
       btn.disabled = true;
@@ -892,10 +923,14 @@
       renderMeetings();
       try {
         const result = await window.api.rescanMeetings();
-        if (result.error) {
-          showToast(result.error, "error");
+        if (result.meetings && result.meetings.length > 0) {
+          for (const m of result.meetings) {
+            detectedMeetings.set(m.id, m);
+          }
+          renderMeetings();
+          showToast(`Found ${result.meetings.length} meeting(s)`, "success");
         } else {
-          showToast("Rescanning for meetings...", "success");
+          showToast("No meetings detected", "");
         }
       } catch (err) {
         showToast(err.message || "Rescan failed", "error");
@@ -903,22 +938,20 @@
       setTimeout(() => {
         btn.disabled = false;
         btn.textContent = "Rescan for Meetings";
-      }, 3000);
+      }, 2000);
     });
 
     // --- Settings ---
     async function loadSettings() {
       const s = await window.api.getSettings();
-      document.getElementById("setting-api-key").value = s.apiKey || "";
-      document.getElementById("setting-region").value = s.region || "us-west-2";
       document.getElementById("setting-auto-record").checked = s.autoRecord || false;
+      document.getElementById("setting-quality").value = s.recordingQuality || "standard";
     }
 
     document.getElementById("btn-save-settings").addEventListener("click", async () => {
       const settings = {
-        apiKey: document.getElementById("setting-api-key").value.trim(),
-        region: document.getElementById("setting-region").value,
         autoRecord: document.getElementById("setting-auto-record").checked,
+        recordingQuality: document.getElementById("setting-quality").value,
       };
       try {
         const result = await window.api.saveSettings(settings);
@@ -930,6 +963,14 @@
       } catch (err) {
         showToast(err.message || "Failed to save settings", "error");
       }
+    });
+
+    document.getElementById("btn-settings-open-folder").addEventListener("click", () => {
+      window.api.openRecordingsFolder();
+    });
+
+    document.getElementById("btn-open-folder").addEventListener("click", () => {
+      window.api.openRecordingsFolder();
     });
 
     // --- Recordings ---
@@ -953,45 +994,59 @@
           const icon = platformIcon(rec.platform);
           const card = document.createElement("div");
           card.className = "recording-card";
-          const hasVideo = rec.recordingId && rec.status === "complete";
-          const recIdx = recordings.indexOf(rec);
+          const durationStr = rec.duration ? formatDuration(rec.duration) : "";
           card.innerHTML = `
             <div class="meeting-icon ${icon.cls}">${icon.letter}</div>
             <div class="recording-info">
               <div class="recording-title">${esc(rec.title || rec.platform || "Recording")}</div>
               <div class="recording-meta">
-                ${rec.endedAt ? new Date(rec.endedAt).toLocaleString() : ""}
-                · ${esc(rec.status || "processing")}
+                ${rec.recordedAt ? new Date(rec.recordedAt).toLocaleString() : ""}
+                ${durationStr ? " · " + durationStr : ""}
+                ${rec.hasTranscript ? ' · <span style="color:var(--green)">Transcribed</span>' : ""}
               </div>
             </div>
             <div class="meeting-actions">
-              <button class="btn btn-sm btn-outline" data-view-idx="${recIdx}">View</button>
-              ${hasVideo ? `<button class="btn btn-sm btn-primary" data-dl-id="${esc(rec.recordingId)}" data-dl-name="${esc(rec.title || rec.platform || "recording")}">Download</button>` : `<span style="font-size:12px;color:var(--text-dim)">${rec.status === "uploading" ? "Uploading..." : rec.status === "complete" ? "Ready" : "Processing..."}</span>`}
+              <button class="btn btn-sm btn-outline" data-view-id="${esc(rec.id)}">View</button>
+              <button class="btn btn-sm btn-outline" data-export-id="${esc(rec.id)}">Export</button>
+              <button class="btn btn-sm btn-outline" data-delete-id="${esc(rec.id)}" style="color:var(--red);border-color:var(--red);">Delete</button>
             </div>
           `;
           list.appendChild(card);
         }
 
-        list.querySelectorAll("[data-view-idx]").forEach((btn) => {
+        list.querySelectorAll("[data-view-id]").forEach((btn) => {
           btn.addEventListener("click", () => {
-            const idx = parseInt(btn.dataset.viewIdx, 10);
-            openRecordingDetail(recordings[idx]);
+            const rec = recordings.find((r) => r.id === btn.dataset.viewId);
+            if (rec) openRecordingDetail(rec);
           });
         });
 
-        list.querySelectorAll("[data-dl-id]").forEach((btn) => {
+        list.querySelectorAll("[data-export-id]").forEach((btn) => {
           btn.addEventListener("click", async () => {
             try {
               btn.disabled = true;
-              btn.textContent = "Downloading...";
-              const result = await window.api.downloadRecording(btn.dataset.dlId, btn.dataset.dlName);
-              if (result && result.success) showToast("Recording saved!", "success");
-              btn.textContent = "Download";
+              btn.textContent = "Exporting...";
+              const result = await window.api.exportRecording(btn.dataset.exportId);
+              if (result && result.success) showToast("Recording exported!", "success");
+              btn.textContent = "Export";
               btn.disabled = false;
             } catch (err) {
-              showToast(err.message || "Download failed", "error");
-              btn.textContent = "Download";
+              showToast(err.message || "Export failed", "error");
+              btn.textContent = "Export";
               btn.disabled = false;
+            }
+          });
+        });
+
+        list.querySelectorAll("[data-delete-id]").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            if (!confirm("Delete this recording? This cannot be undone.")) return;
+            try {
+              await window.api.deleteRecording(btn.dataset.deleteId);
+              showToast("Recording deleted", "success");
+              loadRecordings();
+            } catch (err) {
+              showToast(err.message || "Delete failed", "error");
             }
           });
         });
@@ -1027,16 +1082,34 @@
 
       // Render header
       const icon = platformIcon(rec.platform);
+      const durationStr = rec.duration ? formatDuration(rec.duration) : "";
       document.getElementById("detail-header").innerHTML = `
         <div class="meeting-icon ${icon.cls}">${icon.letter}</div>
         <div class="meeting-info">
           <div class="meeting-name">${esc(rec.title || rec.platform || "Recording")}</div>
           <div class="meeting-meta">
-            ${rec.endedAt ? new Date(rec.endedAt).toLocaleString() : ""}
+            ${rec.recordedAt ? new Date(rec.recordedAt).toLocaleString() : ""}
             · ${esc(rec.platform || "unknown")}
+            ${durationStr ? " · " + durationStr : ""}
           </div>
         </div>
+        <div class="meeting-actions">
+          <button class="btn btn-sm btn-outline" id="detail-export-btn">Export Audio</button>
+        </div>
       `;
+
+      document.getElementById("detail-export-btn").addEventListener("click", async () => {
+        try {
+          await window.api.exportRecording(rec.id);
+          showToast("Exported!", "success");
+        } catch (err) {
+          showToast(err.message || "Export failed", "error");
+        }
+      });
+
+      // Audio player — no player since we don't serve files via URL in this context.
+      // User can export and play locally.
+      document.getElementById("detail-audio-player").innerHTML = "";
 
       // Show loading states
       document.getElementById("summary-loading").style.display = "";
@@ -1046,11 +1119,42 @@
 
       // Fetch transcript
       try {
-        const result = await window.api.getTranscript(rec.uploadId, rec.recordingId || null);
+        const result = await window.api.getTranscript(rec.id);
         const segments = result.segments || [];
 
-        renderTranscript(segments);
-        renderSummary(segments, rec);
+        if (segments.length > 0) {
+          renderTranscript(segments);
+          renderSummary(segments, rec);
+        } else {
+          const noTranscriptMsg = `
+            <div class="summary-card">
+              <p style="color:var(--text-dim)">No transcript available yet. Transcription will be available in a future update with local Whisper integration.</p>
+            </div>
+          `;
+
+          document.getElementById("summary-loading").style.display = "none";
+          document.getElementById("summary-content").innerHTML = `
+            <div class="summary-card">
+              <h4>Overview</h4>
+              <div class="stat-grid">
+                <div class="stat-item">
+                  <div class="stat-value">${durationStr || "—"}</div>
+                  <div class="stat-label">Duration</div>
+                </div>
+                <div class="stat-item">
+                  <div class="stat-value">${esc(rec.platform || "—")}</div>
+                  <div class="stat-label">Platform</div>
+                </div>
+              </div>
+            </div>
+            ${noTranscriptMsg}
+          `;
+          document.getElementById("summary-content").style.display = "";
+
+          document.getElementById("transcript-loading").style.display = "none";
+          document.getElementById("transcript-content").innerHTML = noTranscriptMsg;
+          document.getElementById("transcript-content").style.display = "";
+        }
       } catch (err) {
         const errMsg = `<div class="summary-card"><p style="color:var(--text-dim)">${esc(err.message || "Failed to load transcript")}</p></div>`;
 
@@ -1093,7 +1197,6 @@
         return;
       }
 
-      // Compute stats
       const speakers = new Map();
       let totalWords = 0;
       for (const seg of segments) {
@@ -1104,13 +1207,10 @@
 
       const sortedSpeakers = [...speakers.entries()].sort((a, b) => b[1] - a[1]);
       const estimatedMinutes = Math.max(1, Math.round(totalWords / 150));
-
-      // Build a condensed overview from the transcript
       const overviewSegments = buildOverview(segments);
 
       let html = "";
 
-      // Stats card
       html += `
         <div class="summary-card">
           <h4>Overview</h4>
@@ -1135,7 +1235,6 @@
         </div>
       `;
 
-      // Participants card
       html += `
         <div class="summary-card">
           <h4>Participants</h4>
@@ -1148,30 +1247,28 @@
         </div>
       `;
 
-      // Key points / conversation overview
-      html += `
-        <div class="summary-card">
-          <h4>Conversation Highlights</h4>
-          <ul>
-            ${overviewSegments.map((s) => `<li>${esc(s)}</li>`).join("")}
-          </ul>
-        </div>
-      `;
+      if (overviewSegments.length > 0) {
+        html += `
+          <div class="summary-card">
+            <h4>Conversation Highlights</h4>
+            <ul>
+              ${overviewSegments.map((s) => `<li>${esc(s)}</li>`).join("")}
+            </ul>
+          </div>
+        `;
+      }
 
       container.innerHTML = html;
       container.style.display = "";
     }
 
     function buildOverview(segments) {
-      // Extract notable lines — longer segments that are likely substantive
-      // Group consecutive segments by speaker and pick the longest from each
       const highlights = [];
       let currentSpeaker = null;
       let currentGroup = [];
 
       const flush = () => {
         if (currentGroup.length > 0) {
-          // Pick the longest segment from this speaker's group
           const best = currentGroup.reduce((a, b) => a.text.length > b.text.length ? a : b);
           if (best.text.split(/\s+/).length >= 4) {
             highlights.push(`${best.speaker}: "${best.text}"`);
@@ -1189,7 +1286,6 @@
       }
       flush();
 
-      // Return up to 8 highlights, evenly distributed
       if (highlights.length <= 8) return highlights;
       const step = highlights.length / 8;
       const result = [];
@@ -1201,25 +1297,7 @@
 
     // --- Init ---
     (async () => {
-      const s = await window.api.getSettings();
-      if (!s.apiKey) {
-        document.querySelectorAll(".tab")[2].click();
-        showToast("Please configure your Recall.ai API key to get started", "");
-        return;
-      }
-
-      // Check current permission status
-      try {
-        const permStatus = await window.api.getPermissionStatus();
-        if (permStatus.granted) {
-          setStatus("listening", "Listening for meetings", "Open Zoom, Google Meet, or Microsoft Teams to get started");
-        } else {
-          setStatus("idle", "Checking permissions...", "Verifying system permissions");
-        }
-      } catch {
-        setStatus("listening", "Listening for meetings", "Open Zoom, Google Meet, or Microsoft Teams to get started");
-      }
-
+      setStatus("listening", "Listening for meetings", "Open Zoom, Google Meet, or Microsoft Teams to get started");
       document.getElementById("empty-live").style.display = "";
     })();
   </script>
