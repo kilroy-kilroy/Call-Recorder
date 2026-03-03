@@ -36,11 +36,24 @@ let activeRecordings = new Map(); // windowId -> { uploadId, uploadToken }
 let liveTranscripts = new Map(); // uploadId -> [{ speaker, text }]
 let permissionsGranted = false;
 let sdkListenersAttached = false;
+let sdkRestartTimer = null;
+let sdkRestartAttempts = 0;
 let permissionStatuses = {
   accessibility: "unknown",
   microphone: "unknown",
   "screen-capture": "unknown",
 };
+
+// Catch SDK child process crash rejections so they don't kill the app
+process.on("unhandledRejection", (reason) => {
+  const msg = reason?.message || String(reason);
+  if (msg.includes("Process exited")) {
+    console.error("[SDK] Child process crashed:", msg);
+    scheduleSDKRestart();
+    return;
+  }
+  console.error("Unhandled rejection:", reason);
+});
 
 // --- Settings ---
 
@@ -114,13 +127,35 @@ function getApi() {
 
 // --- Desktop SDK ---
 
-function initSdk() {
+function scheduleSDKRestart() {
+  if (sdkRestartTimer) return;
+  const delay = Math.min(5000 * Math.pow(2, sdkRestartAttempts), 20000);
+  sdkRestartAttempts++;
+  console.log(`[SDK] Scheduling restart in ${delay}ms (attempt ${sdkRestartAttempts})`);
+  sdkRestartTimer = setTimeout(async () => {
+    sdkRestartTimer = null;
+    console.log("[SDK] Attempting restart after crash...");
+    try {
+      if (RecallAiSdk && sdkInitialized) {
+        await RecallAiSdk.shutdown();
+      }
+    } catch { /* ignore */ }
+    sdkInitialized = false;
+    initSdk();
+  }, delay);
+}
+
+async function initSdk() {
   if (!RecallAiSdk || sdkInitialized) return;
 
   const settings = loadSettings();
   const apiUrl = `https://${settings.region}.recall.ai`;
 
   try {
+    // Defensive shutdown — clears stale native process state that can
+    // cause "Trying to start process while it is already started" crashes.
+    try { await RecallAiSdk.shutdown(); } catch { /* no-op if nothing running */ }
+
     // Register listeners BEFORE init so we don't miss early events.
     // Only attach once — they survive SDK shutdown/reinit.
     permissionsGranted = false;
@@ -148,6 +183,7 @@ function initSdk() {
       ],
     });
     sdkInitialized = true;
+    sdkRestartAttempts = 0;
 
     // If the SDK granted permissions synchronously during init(),
     // re-notify the renderer so it doesn't stay in "Checking" state.
@@ -155,6 +191,9 @@ function initSdk() {
       sendToRenderer("permissions-granted", {});
     }
   } catch (err) {
+    console.error("[SDK] init failed:", err.message);
+    sdkInitialized = false;
+    scheduleSDKRestart();
     sendToRenderer("sdk-error", {
       message: `SDK init failed: ${err.message}`,
     });
@@ -194,7 +233,11 @@ function setupSdkEventListeners() {
   });
 
   RecallAiSdk.addEventListener("sdk-state-change", (evt) => {
+    console.log("[SDK] state-change:", JSON.stringify(evt));
     sendToRenderer("sdk-state-change", evt);
+    if (evt && (evt.state === "stopped" || evt.state === "error")) {
+      scheduleSDKRestart();
+    }
   });
 
   RecallAiSdk.addEventListener("permission-status", (evt) => {
@@ -351,7 +394,8 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, "index.html"));
 
   mainWindow.webContents.on("did-finish-load", () => {
-    initSdk();
+    // Short delay before SDK init to avoid race with stale native process
+    setTimeout(() => initSdk(), 1500);
   });
 }
 
