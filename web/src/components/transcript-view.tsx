@@ -1,41 +1,72 @@
 "use client";
 
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+
+interface Segment {
+  speaker: string;
+  text: string;
+  start_time: number;
+  end_time: number;
+}
 
 interface TranscriptViewProps {
+  segments: Segment[];
   fullText: string;
 }
 
-export function TranscriptView({ fullText }: TranscriptViewProps) {
-  const [expanded, setExpanded] = useState(false);
+function formatTime(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
 
-  if (!fullText) {
-    return (
-      <p className="py-8 text-center text-zinc-500">
-        No transcript available yet.
-      </p>
-    );
+export function TranscriptView({ segments, fullText }: TranscriptViewProps) {
+  const [search, setSearch] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  async function copyTranscript() {
+    await navigator.clipboard.writeText(fullText);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   }
 
-  const lines = fullText.split("\n");
-  const shouldTruncate = lines.length > 60;
-  const displayText = shouldTruncate && !expanded
-    ? lines.slice(0, 60).join("\n") + "\n..."
-    : fullText;
+  const filtered = search
+    ? segments.filter((s) =>
+        s.text.toLowerCase().includes(search.toLowerCase())
+      )
+    : segments;
 
   return (
-    <div className="space-y-3">
-      <pre className="whitespace-pre-wrap rounded-lg bg-zinc-900/50 p-4 font-mono text-sm leading-relaxed text-zinc-300">
-        {displayText}
-      </pre>
-      {shouldTruncate && (
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className="text-sm text-zinc-400 hover:text-zinc-200 transition-colors"
-        >
-          {expanded ? "Show less" : `Show all ${lines.length} lines`}
-        </button>
-      )}
+    <div>
+      <div className="mb-4 flex items-center gap-3">
+        <Input
+          type="search"
+          placeholder="Search transcript..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="max-w-xs"
+        />
+        <Button variant="outline" size="sm" onClick={copyTranscript}>
+          {copied ? "Copied!" : "Copy Transcript"}
+        </Button>
+      </div>
+      <div className="space-y-3">
+        {filtered.map((segment, i) => (
+          <div key={i} className="flex gap-3">
+            <span className="shrink-0 font-mono text-xs text-zinc-500 pt-1 w-12">
+              {formatTime(segment.start_time)}
+            </span>
+            <div>
+              <span className="text-sm font-medium text-zinc-300">
+                {segment.speaker}
+              </span>
+              <p className="text-sm text-zinc-400">{segment.text}</p>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

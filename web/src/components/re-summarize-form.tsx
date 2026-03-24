@@ -1,65 +1,47 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import type { StructuredSummary } from "@/lib/summarize";
 
 interface ReSummarizeFormProps {
   meetingId: string;
-  onSummaryGenerated: (summary: StructuredSummary) => void;
-  onLoadingChange: (loading: boolean) => void;
 }
 
-export function ReSummarizeForm({
-  meetingId,
-  onSummaryGenerated,
-  onLoadingChange,
-}: ReSummarizeFormProps) {
-  const [customPrompt, setCustomPrompt] = useState("");
-  const [error, setError] = useState<string | null>(null);
+export function ReSummarizeForm({ meetingId }: ReSummarizeFormProps) {
+  const [prompt, setPrompt] = useState("");
+  const [loading, setLoading] = useState(false);
+  const router = useRouter();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setError(null);
-    onLoadingChange(true);
+    setLoading(true);
 
-    try {
-      const res = await fetch("/api/summarize", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          meetingId,
-          customPrompt: customPrompt.trim() || undefined,
-        }),
-      });
+    await fetch("/api/summarize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        meetingId,
+        customPrompt: prompt || undefined,
+      }),
+    });
 
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error ?? "Failed to generate summary");
-      }
-
-      const { summary } = await res.json();
-      onSummaryGenerated(summary.content);
-      setCustomPrompt("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
-    } finally {
-      onLoadingChange(false);
-    }
+    setLoading(false);
+    setPrompt("");
+    router.refresh();
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-3">
+    <form onSubmit={handleSubmit} className="space-y-2">
       <Textarea
-        placeholder="Custom prompt (optional) — leave blank for default summary"
-        value={customPrompt}
-        onChange={(e) => setCustomPrompt(e.target.value)}
-        className="min-h-[80px]"
+        placeholder='e.g., "Summarize as a sales call recap" or leave blank for default summary'
+        value={prompt}
+        onChange={(e) => setPrompt(e.target.value)}
+        rows={2}
       />
-      {error && <p className="text-sm text-red-400">{error}</p>}
-      <Button type="submit" variant="secondary" size="sm">
-        Re-summarize
+      <Button type="submit" size="sm" disabled={loading}>
+        {loading ? "Generating..." : "Re-summarize"}
       </Button>
     </form>
   );
