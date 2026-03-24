@@ -162,6 +162,15 @@ Audio uploaded
 
 Each step updates the meeting status so the dashboard reflects current state. If any step fails, status shows "error" with a retry button.
 
+### Async Pipeline Mechanism
+
+The upload route stores the file and creates the meeting record synchronously, then triggers the transcription pipeline asynchronously. Two options depending on Deepgram's callback support:
+
+1. **Deepgram callback (preferred)** — Deepgram supports a `callback` URL parameter. The upload route sends audio to Deepgram with `callback=https://yourapp.vercel.app/api/transcribe-callback`. Deepgram posts the transcript back when done. No long-running Vercel function needed.
+2. **Sequential in a single function** — For a 45-minute meeting, Deepgram pre-recorded transcription typically returns in 30-60 seconds. This fits within Vercel's function timeout (300s default). The upload route can call Deepgram, wait for the response, store the transcript, then call the LLM for summarization — all in one request.
+
+Option 1 is more resilient. Option 2 is simpler. Either works; decide at implementation time.
+
 ## Component 3: Data Storage (Supabase)
 
 ### Postgres Tables
@@ -272,6 +281,7 @@ Each destination is a small adapter function (~50-100 lines) that takes meeting 
 ## Security
 
 - Upload endpoint authenticated with API key (shared secret between agent and server)
+- Web app protected with a simple password gate (environment variable) — single-user personal tool, no need for full auth system
 - Web app behind Vercel's default security (HTTPS, DDoS protection)
 - Supabase row-level security for data access
 - No sensitive data stored in the web app's environment beyond API keys (Deepgram, Supabase)
@@ -287,4 +297,4 @@ Each destination is a small adapter function (~50-100 lines) that takes meeting 
 | File storage | Supabase Storage |
 | Transcription | Deepgram Nova-2 API |
 | AI summaries | Vercel AI Gateway → Claude/GPT |
-| UI styling | TBD (likely Tailwind + shadcn/ui) |
+| UI styling | Tailwind CSS + shadcn/ui |
