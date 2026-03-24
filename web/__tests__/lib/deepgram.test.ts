@@ -1,4 +1,7 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeAll } from "vitest";
+
+// Set env var before import
+vi.stubEnv("DEEPGRAM_API_KEY", "test-key");
 
 // Mock fetch globally
 const mockFetch = vi.fn();
