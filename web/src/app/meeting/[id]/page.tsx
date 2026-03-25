@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { supabase } from "@/lib/supabase";
+import { sql } from "@/lib/db";
 import { Nav } from "@/components/nav";
 import { TranscriptView } from "@/components/transcript-view";
 import { SummaryPanel } from "@/components/summary-panel";
@@ -15,21 +15,17 @@ interface MeetingPageProps {
 export default async function MeetingPage({ params }: MeetingPageProps) {
   const { id } = await params;
 
-  const [meetingResult, transcriptResult, summariesResult] = await Promise.all([
-    supabase.from("meetings").select("*").eq("id", id).single(),
-    supabase.from("transcripts").select("*").eq("meeting_id", id).single(),
-    supabase
-      .from("summaries")
-      .select("*")
-      .eq("meeting_id", id)
-      .order("created_at", { ascending: false }),
+  const [meetingRows, transcriptRows, summaryRows] = await Promise.all([
+    sql`SELECT * FROM meetings WHERE id = ${id} LIMIT 1`,
+    sql`SELECT * FROM transcripts WHERE meeting_id = ${id} LIMIT 1`,
+    sql`SELECT * FROM summaries WHERE meeting_id = ${id} ORDER BY created_at DESC`,
   ]);
 
-  const meeting = meetingResult.data;
+  const meeting = meetingRows[0];
   if (!meeting) notFound();
 
-  const transcript = transcriptResult.data;
-  const summaries = summariesResult.data ?? [];
+  const transcript = transcriptRows[0] ?? null;
+  const summaries = summaryRows ?? [];
   const latestSummary = summaries[0]?.content ?? null;
 
   return (

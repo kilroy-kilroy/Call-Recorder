@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
+import { sql } from "@/lib/db";
+import { put } from "@vercel/blob";
 
 export async function POST(request: NextRequest) {
   // Validate API key
@@ -21,43 +22,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Upload to Supabase Storage
-    const fileName = `audio/${Date.now()}-${file.name}`;
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const { error: uploadError } = await supabase.storage
-      .from("meeting-audio")
-      .upload(fileName, buffer, { contentType: file.type });
-
-    if (uploadError) {
-      throw new Error(`Storage upload failed: ${uploadError.message}`);
-    }
+    // Upload to Vercel Blob
+    const blob = await put(`audio/${Date.now()}-${file.name}`, file, {
+      access: "public",
+    });
 
     // Create meeting record
-    const { data: meeting, error: dbError } = await supabase
-      .from("meetings")
-      .insert({
-        recorded_at: recordedAt ?? new Date().toISOString(),
-        duration_seconds: durationSeconds ? parseInt(durationSeconds) : null,
-        status: "processing",
-      })
-      .select()
-      .single();
-
-    if (dbError) {
-      throw new Error(`Database insert failed: ${dbError.message}`);
-    }
-
-    // Get a signed URL for Deepgram to access the audio
-    const { data: signedUrlData } = await supabase.storage
-      .from("meeting-audio")
-      .createSignedUrl(fileName, 3600);
-
-    if (!signedUrlData?.signedUrl) {
-      throw new Error("Failed to create signed URL for audio");
-    }
+    const [meeting] = await sql`
+      INSERT INTO meetings (recorded_at, duration_seconds, status)
+      VALUES (${recordedAt ?? new Date().toISOString()}, ${durationSeconds ? parseInt(durationSeconds) : null}, 'processing')
+      RETURNING *
+    `;
 
     // Trigger transcription via Deepgram with callback
-    const callbackUrl = `${request.nextUrl.origin}/api/transcribe-callback?meeting_id=${meeting.id}&audio_path=${encodeURIComponent(fileName)}`;
+    const callbackUrl = `${request.nextUrl.origin}/api/transcribe-callback?meeting_id=${meeting.id}&audio_url=${encodeURIComponent(blob.url)}`;
 
     const dgResponse = await fetch(
       `https://api.deepgram.com/v1/listen?model=nova-2&smart_format=true&diarize=true&paragraphs=true&punctuate=true&callback=${encodeURIComponent(callbackUrl)}`,
@@ -67,26 +45,22 @@ export async function POST(request: NextRequest) {
           Authorization: `Token ${process.env.DEEPGRAM_API_KEY}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ url: signedUrlData.signedUrl }),
+        body: JSON.stringify({ url: blob.url }),
       }
     );
 
     if (!dgResponse.ok) {
-      await supabase
-        .from("meetings")
-        .update({
-          status: "error",
-          error_message: "Failed to start transcription",
-        })
-        .eq("id", meeting.id);
+      await sql`
+        UPDATE meetings SET status = 'error', error_message = 'Failed to start transcription'
+        WHERE id = ${meeting.id}
+      `;
       throw new Error(`Deepgram request failed: ${dgResponse.status}`);
     }
 
     // Update status to transcribing
-    await supabase
-      .from("meetings")
-      .update({ status: "transcribing" })
-      .eq("id", meeting.id);
+    await sql`
+      UPDATE meetings SET status = 'transcribing' WHERE id = ${meeting.id}
+    `;
 
     return NextResponse.json({
       meetingId: meeting.id,

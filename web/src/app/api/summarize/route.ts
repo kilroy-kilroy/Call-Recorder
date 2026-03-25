@@ -1,8 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
+import { NextResponse } from "next/server";
+import { sql } from "@/lib/db";
 import { generateSummary } from "@/lib/summarize";
 
-export async function POST(request: NextRequest) {
+export async function POST(request: Request) {
   try {
     const { meetingId, customPrompt } = await request.json();
 
@@ -11,35 +11,24 @@ export async function POST(request: NextRequest) {
     }
 
     // Get transcript
-    const { data: transcript, error: txError } = await supabase
-      .from("transcripts")
-      .select("full_text")
-      .eq("meeting_id", meetingId)
-      .single();
+    const transcripts = await sql`
+      SELECT full_text FROM transcripts WHERE meeting_id = ${meetingId} LIMIT 1
+    `;
 
-    if (txError || !transcript) {
+    if (transcripts.length === 0) {
       return NextResponse.json({ error: "Transcript not found" }, { status: 404 });
     }
 
     const { structured, rawText, promptUsed } = await generateSummary(
-      transcript.full_text,
+      transcripts[0].full_text,
       customPrompt
     );
 
-    const { data: summary, error: insertError } = await supabase
-      .from("summaries")
-      .insert({
-        meeting_id: meetingId,
-        prompt_used: promptUsed,
-        content: structured,
-        raw_text: rawText,
-      })
-      .select()
-      .single();
-
-    if (insertError) {
-      throw new Error(`Summary insert failed: ${insertError.message}`);
-    }
+    const [summary] = await sql`
+      INSERT INTO summaries (meeting_id, prompt_used, content, raw_text)
+      VALUES (${meetingId}, ${promptUsed}, ${JSON.stringify(structured)}, ${rawText})
+      RETURNING *
+    `;
 
     return NextResponse.json({ summary });
   } catch (error) {

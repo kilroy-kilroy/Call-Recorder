@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import { sql } from "@/lib/db";
 import { Nav } from "@/components/nav";
 import { SearchBar } from "@/components/search-bar";
 import { MeetingCard } from "@/components/meeting-card";
@@ -10,29 +10,43 @@ interface DashboardProps {
 export default async function DashboardPage({ searchParams }: DashboardProps) {
   const { q } = await searchParams;
 
-  let query = supabase
-    .from("meetings")
-    .select("id, title, recorded_at, duration_seconds, status")
-    .order("recorded_at", { ascending: false })
-    .limit(50);
+  let meetings;
 
   if (q) {
-    // Search via transcript full text
-    const { data: transcriptMatches } = await supabase
-      .from("transcripts")
-      .select("meeting_id")
-      .textSearch("full_text", q);
+    // Search via transcript full text first
+    const transcriptMatches = await sql`
+      SELECT meeting_id FROM transcripts
+      WHERE to_tsvector('english', full_text) @@ plainto_tsquery('english', ${q})
+    `;
 
-    const meetingIds = transcriptMatches?.map((t) => t.meeting_id) ?? [];
+    const meetingIds = transcriptMatches.map((t) => t.meeting_id);
+
     if (meetingIds.length > 0) {
-      query = query.in("id", meetingIds);
+      meetings = await sql`
+        SELECT id, title, recorded_at, duration_seconds, status
+        FROM meetings
+        WHERE id = ANY(${meetingIds})
+        ORDER BY recorded_at DESC
+        LIMIT 50
+      `;
     } else {
-      // No matches — also try title search
-      query = query.ilike("title", `%${q}%`);
+      // No transcript matches — try title search
+      meetings = await sql`
+        SELECT id, title, recorded_at, duration_seconds, status
+        FROM meetings
+        WHERE title ILIKE ${'%' + q + '%'}
+        ORDER BY recorded_at DESC
+        LIMIT 50
+      `;
     }
+  } else {
+    meetings = await sql`
+      SELECT id, title, recorded_at, duration_seconds, status
+      FROM meetings
+      ORDER BY recorded_at DESC
+      LIMIT 50
+    `;
   }
-
-  const { data: meetings } = await query;
 
   return (
     <>

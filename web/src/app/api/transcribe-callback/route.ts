@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
+import { sql } from "@/lib/db";
+import { del } from "@vercel/blob";
 import { generateSummary } from "@/lib/summarize";
 
 interface DeepgramParagraph {
@@ -9,7 +10,7 @@ interface DeepgramParagraph {
 
 export async function POST(request: NextRequest) {
   const meetingId = request.nextUrl.searchParams.get("meeting_id");
-  const audioPath = request.nextUrl.searchParams.get("audio_path");
+  const audioUrl = request.nextUrl.searchParams.get("audio_url");
 
   if (!meetingId) {
     return NextResponse.json(
@@ -39,60 +40,51 @@ export async function POST(request: NextRequest) {
       .join("\n");
 
     // Store transcript
-    const { error: transcriptError } = await supabase
-      .from("transcripts")
-      .insert({ meeting_id: meetingId, segments, full_text: fullText });
-
-    if (transcriptError) {
-      throw new Error(`Transcript insert failed: ${transcriptError.message}`);
-    }
+    await sql`
+      INSERT INTO transcripts (meeting_id, segments, full_text)
+      VALUES (${meetingId}, ${JSON.stringify(segments)}, ${fullText})
+    `;
 
     // Update meeting status
-    await supabase
-      .from("meetings")
-      .update({ status: "summarizing" })
-      .eq("id", meetingId);
+    await sql`
+      UPDATE meetings SET status = 'summarizing' WHERE id = ${meetingId}
+    `;
 
     // Generate summary
     try {
       const { structured, rawText, promptUsed } =
         await generateSummary(fullText);
 
-      await supabase.from("summaries").insert({
-        meeting_id: meetingId,
-        prompt_used: promptUsed,
-        content: structured,
-        raw_text: rawText,
-      });
+      await sql`
+        INSERT INTO summaries (meeting_id, prompt_used, content, raw_text)
+        VALUES (${meetingId}, ${promptUsed}, ${JSON.stringify(structured)}, ${rawText})
+      `;
 
       // Update meeting title and status
-      await supabase
-        .from("meetings")
-        .update({ title: structured.title, status: "ready" })
-        .eq("id", meetingId);
+      await sql`
+        UPDATE meetings SET title = ${structured.title}, status = 'ready'
+        WHERE id = ${meetingId}
+      `;
     } catch {
       // Summarization failure is non-blocking -- transcript is safe
-      await supabase
-        .from("meetings")
-        .update({
-          status: "ready",
-          error_message: "Summary generation failed",
-        })
-        .eq("id", meetingId);
+      await sql`
+        UPDATE meetings SET status = 'ready', error_message = 'Summary generation failed'
+        WHERE id = ${meetingId}
+      `;
     }
 
-    // Delete audio file from storage
-    if (audioPath) {
-      await supabase.storage.from("meeting-audio").remove([audioPath]);
+    // Delete audio file from blob storage
+    if (audioUrl) {
+      await del(audioUrl);
     }
 
     return NextResponse.json({ success: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-    await supabase
-      .from("meetings")
-      .update({ status: "error", error_message: message })
-      .eq("id", meetingId);
+    await sql`
+      UPDATE meetings SET status = 'error', error_message = ${message}
+      WHERE id = ${meetingId}
+    `;
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

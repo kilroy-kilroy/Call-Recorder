@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
+import { sql } from "@/lib/db";
 import { formatForClipboard, formatForDownload, sendWebhook } from "@/lib/export-adapters";
 
 export async function POST(
@@ -17,30 +17,16 @@ export async function POST(
     }
 
     // Fetch meeting data
-    const [transcriptResult, summaryResult, meetingResult] = await Promise.all([
-      supabase
-        .from("transcripts")
-        .select("full_text")
-        .eq("meeting_id", meetingId)
-        .single(),
-      supabase
-        .from("summaries")
-        .select("content")
-        .eq("meeting_id", meetingId)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .single(),
-      supabase
-        .from("meetings")
-        .select("recorded_at")
-        .eq("id", meetingId)
-        .single(),
+    const [transcripts, summaries, meetings] = await Promise.all([
+      sql`SELECT full_text FROM transcripts WHERE meeting_id = ${meetingId} LIMIT 1`,
+      sql`SELECT content FROM summaries WHERE meeting_id = ${meetingId} ORDER BY created_at DESC LIMIT 1`,
+      sql`SELECT recorded_at FROM meetings WHERE id = ${meetingId} LIMIT 1`,
     ]);
 
-    const transcript = transcriptResult.data?.full_text ?? null;
-    const summary = summaryResult.data?.content ?? null;
-    const dateStr = meetingResult.data?.recorded_at
-      ? new Date(meetingResult.data.recorded_at).toISOString().split("T")[0]
+    const transcript = transcripts[0]?.full_text ?? null;
+    const summary = summaries[0]?.content ?? null;
+    const dateStr = meetings[0]?.recorded_at
+      ? new Date(meetings[0].recorded_at).toISOString().split("T")[0]
       : new Date().toISOString().split("T")[0];
 
     if (type === "clipboard") {
@@ -69,29 +55,25 @@ export async function POST(
         return NextResponse.json({ error: "Missing destinationId" }, { status: 400 });
       }
 
-      const { data: destination } = await supabase
-        .from("export_destinations")
-        .select("config")
-        .eq("id", destinationId)
-        .single();
+      const destinations = await sql`
+        SELECT config FROM export_destinations WHERE id = ${destinationId} LIMIT 1
+      `;
 
-      if (!destination) {
+      if (destinations.length === 0) {
         return NextResponse.json({ error: "Destination not found" }, { status: 404 });
       }
 
-      await sendWebhook(destination.config, {
+      await sendWebhook(destinations[0].config, {
         meetingId,
         transcript,
         summary,
       });
 
       // Log the export
-      await supabase.from("export_log").insert({
-        meeting_id: meetingId,
-        destination_id: destinationId,
-        content_type: contentType,
-        status: "success",
-      });
+      await sql`
+        INSERT INTO export_log (meeting_id, destination_id, content_type, status)
+        VALUES (${meetingId}, ${destinationId}, ${contentType}, 'success')
+      `;
 
       return NextResponse.json({ success: true });
     }

@@ -1,17 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
+import { sql } from "@/lib/db";
 
 export async function GET() {
-  const { data, error } = await supabase
-    .from("export_destinations")
-    .select("*")
-    .order("created_at", { ascending: false });
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  try {
+    const data = await sql`
+      SELECT * FROM export_destinations ORDER BY created_at DESC
+    `;
+    return NextResponse.json(data);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
-
-  return NextResponse.json(data);
 }
 
 export async function POST(request: NextRequest) {
@@ -26,15 +25,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { data, error } = await supabase
-      .from("export_destinations")
-      .insert({ name, type, config })
-      .select()
-      .single();
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
+    const [data] = await sql`
+      INSERT INTO export_destinations (name, type, config)
+      VALUES (${name}, ${type}, ${JSON.stringify(config)})
+      RETURNING *
+    `;
 
     return NextResponse.json(data, { status: 201 });
   } catch (error) {
@@ -51,14 +46,11 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "Missing id query parameter" }, { status: 400 });
   }
 
-  const { error } = await supabase
-    .from("export_destinations")
-    .delete()
-    .eq("id", id);
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  try {
+    await sql`DELETE FROM export_destinations WHERE id = ${id}`;
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
-
-  return NextResponse.json({ success: true });
 }
