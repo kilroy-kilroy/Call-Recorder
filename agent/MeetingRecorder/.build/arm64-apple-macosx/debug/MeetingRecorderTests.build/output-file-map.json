@@ -1,0 +1,12 @@
+{
+  "": {
+    "swift-dependencies": "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/.build/arm64-apple-macosx/debug/MeetingRecorderTests.build/master.swiftdeps"
+  },
+  "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/MeetingRecorderTests/PlaceholderTests.swift": {
+    "dependencies": "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/.build/arm64-apple-macosx/debug/MeetingRecorderTests.build/PlaceholderTests.d",
+    "object": "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/.build/arm64-apple-macosx/debug/MeetingRecorderTests.build/PlaceholderTests.swift.o",
+    "swiftmodule": "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/.build/arm64-apple-macosx/debug/MeetingRecorderTests.build/PlaceholderTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/.build/arm64-apple-macosx/debug/MeetingRecorderTests.build/PlaceholderTests.swiftdeps",
+    "diagnostics": "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/.build/arm64-apple-macosx/debug/MeetingRecorderTests.build/PlaceholderTests.dia"
+  }
+}

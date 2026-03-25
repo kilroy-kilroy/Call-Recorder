@@ -1,0 +1,33 @@
+{
+  "": {
+    "swift-dependencies": "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/.build/arm64-apple-macosx/debug/MeetingRecorder.build/master.swiftdeps"
+  },
+  "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/MeetingRecorder/AppState.swift": {
+    "dependencies": "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/.build/arm64-apple-macosx/debug/MeetingRecorder.build/AppState.d",
+    "object": "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/.build/arm64-apple-macosx/debug/MeetingRecorder.build/AppState.swift.o",
+    "swiftmodule": "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/.build/arm64-apple-macosx/debug/MeetingRecorder.build/AppState~partial.swiftmodule",
+    "swift-dependencies": "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/.build/arm64-apple-macosx/debug/MeetingRecorder.build/AppState.swiftdeps",
+    "diagnostics": "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/.build/arm64-apple-macosx/debug/MeetingRecorder.build/AppState.dia"
+  },
+  "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/MeetingRecorder/KeychainHelper.swift": {
+    "dependencies": "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/.build/arm64-apple-macosx/debug/MeetingRecorder.build/KeychainHelper.d",
+    "object": "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/.build/arm64-apple-macosx/debug/MeetingRecorder.build/KeychainHelper.swift.o",
+    "swiftmodule": "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/.build/arm64-apple-macosx/debug/MeetingRecorder.build/KeychainHelper~partial.swiftmodule",
+    "swift-dependencies": "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/.build/arm64-apple-macosx/debug/MeetingRecorder.build/KeychainHelper.swiftdeps",
+    "diagnostics": "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/.build/arm64-apple-macosx/debug/MeetingRecorder.build/KeychainHelper.dia"
+  },
+  "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/MeetingRecorder/MeetingRecorderApp.swift": {
+    "dependencies": "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/.build/arm64-apple-macosx/debug/MeetingRecorder.build/MeetingRecorderApp.d",
+    "object": "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/.build/arm64-apple-macosx/debug/MeetingRecorder.build/MeetingRecorderApp.swift.o",
+    "swiftmodule": "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/.build/arm64-apple-macosx/debug/MeetingRecorder.build/MeetingRecorderApp~partial.swiftmodule",
+    "swift-dependencies": "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/.build/arm64-apple-macosx/debug/MeetingRecorder.build/MeetingRecorderApp.swiftdeps",
+    "diagnostics": "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/.build/arm64-apple-macosx/debug/MeetingRecorder.build/MeetingRecorderApp.dia"
+  },
+  "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/MeetingRecorder/MenuBarView.swift": {
+    "dependencies": "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/.build/arm64-apple-macosx/debug/MeetingRecorder.build/MenuBarView.d",
+    "object": "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/.build/arm64-apple-macosx/debug/MeetingRecorder.build/MenuBarView.swift.o",
+    "swiftmodule": "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/.build/arm64-apple-macosx/debug/MeetingRecorder.build/MenuBarView~partial.swiftmodule",
+    "swift-dependencies": "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/.build/arm64-apple-macosx/debug/MeetingRecorder.build/MenuBarView.swiftdeps",
+    "diagnostics": "/Users/timkilroy/Projects/Call-Recorder/agent/MeetingRecorder/.build/arm64-apple-macosx/debug/MeetingRecorder.build/MenuBarView.dia"
+  }
+}
