@@ -1,53 +1,46 @@
 import Foundation
-import Security
 
+/// Stores settings in a simple JSON file in Application Support
+/// instead of Keychain to avoid macOS authorization dialogs.
 class KeychainHelper {
-    private let service: String
+    private let configURL: URL
 
     init(service: String = "com.meetingrecorder.app") {
-        self.service = service
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let dir = appSupport.appendingPathComponent("MeetingRecorder")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        configURL = dir.appendingPathComponent("config.json")
     }
 
-    func getServerURL() -> String? { read(account: "serverURL") }
-    func setServerURL(_ url: String) { save(account: "serverURL", value: url) }
-    func deleteServerURL() { delete(account: "serverURL") }
+    func getServerURL() -> String? { readConfig()["serverURL"] }
+    func setServerURL(_ url: String) { update(key: "serverURL", value: url) }
+    func deleteServerURL() { remove(key: "serverURL") }
 
-    func getAPIKey() -> String? { read(account: "apiKey") }
-    func setAPIKey(_ key: String) { save(account: "apiKey", value: key) }
-    func deleteAPIKey() { delete(account: "apiKey") }
+    func getAPIKey() -> String? { readConfig()["apiKey"] }
+    func setAPIKey(_ key: String) { update(key: "apiKey", value: key) }
+    func deleteAPIKey() { remove(key: "apiKey") }
 
-    private func save(account: String, value: String) {
-        delete(account: account)
-        let data = value.data(using: .utf8)!
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecValueData as String: data,
-        ]
-        SecItemAdd(query as CFDictionary, nil)
+    private func update(key: String, value: String) {
+        var config = readConfig()
+        config[key] = value
+        writeConfig(config)
     }
 
-    private func read(account: String) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess, let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+    private func remove(key: String) {
+        var config = readConfig()
+        config.removeValue(forKey: key)
+        writeConfig(config)
     }
 
-    private func delete(account: String) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-        SecItemDelete(query as CFDictionary)
+    private func readConfig() -> [String: String] {
+        guard let data = try? Data(contentsOf: configURL),
+              let config = try? JSONDecoder().decode([String: String].self, from: data)
+        else { return [:] }
+        return config
+    }
+
+    private func writeConfig(_ config: [String: String]) {
+        guard let data = try? JSONEncoder().encode(config) else { return }
+        try? data.write(to: configURL, options: .atomic)
     }
 }
