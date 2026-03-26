@@ -6,7 +6,6 @@ import { TranscriptView } from "@/components/transcript-view";
 import { SummaryPanel } from "@/components/summary-panel";
 import { ReSummarizeForm } from "@/components/re-summarize-form";
 import { ExportMenu } from "@/components/export-menu";
-import { Badge } from "@/components/ui/badge";
 
 interface MeetingPageProps {
   params: Promise<{ id: string }>;
@@ -61,17 +60,15 @@ export default async function MeetingPage({ params }: MeetingPageProps) {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Badge
-              variant={
-                meeting.status === "ready"
-                  ? "default"
-                  : meeting.status === "error"
-                    ? "destructive"
-                    : "secondary"
-              }
-            >
+            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+              meeting.status === "ready"
+                ? "bg-green-900/30 text-green-400"
+                : meeting.status === "error"
+                  ? "bg-red-900/30 text-red-400"
+                  : "bg-zinc-800 text-zinc-400"
+            }`}>
               {meeting.status}
-            </Badge>
+            </span>
             <ExportMenu meetingId={id} />
           </div>
         </div>
