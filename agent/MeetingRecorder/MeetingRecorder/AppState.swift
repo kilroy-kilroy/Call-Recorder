@@ -67,9 +67,43 @@ class AppState: ObservableObject {
     }
 
     private func upload(fileURL: URL) async {
-        // Placeholder — will be implemented with Uploader in Task 5
-        state = .done
-        try? await Task.sleep(nanoseconds: 3_000_000_000)
-        state = .idle
+        let helper = KeychainHelper()
+        guard let serverURL = helper.getServerURL(),
+              let apiKey = helper.getAPIKey() else {
+            state = .error
+            errorMessage = "Server URL or API key not configured"
+            return
+        }
+
+        let recordedAt = ISO8601DateFormatter().string(from: recordingStartTime ?? Date())
+        let durationSeconds = Int(recordingDuration)
+
+        let uploader = Uploader(serverURL: serverURL, apiKey: apiKey)
+
+        do {
+            _ = try await uploader.upload(
+                fileURL: fileURL,
+                recordedAt: recordedAt,
+                durationSeconds: durationSeconds,
+                onProgress: { [weak self] progress in
+                    Task { @MainActor in
+                        self?.uploadProgress = progress
+                    }
+                }
+            )
+            state = .done
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            state = .idle
+            uploadProgress = 0
+        } catch {
+            // Save as pending upload for retry later
+            Uploader.savePendingUpload(PendingUpload(
+                filePath: fileURL.path,
+                recordedAt: recordingStartTime ?? Date(),
+                durationSeconds: durationSeconds
+            ))
+            state = .error
+            errorMessage = error.localizedDescription
+        }
     }
 }
