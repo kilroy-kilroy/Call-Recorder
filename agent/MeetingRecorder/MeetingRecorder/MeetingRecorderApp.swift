@@ -9,5 +9,6 @@ struct MeetingRecorderApp: App {
             MenuBarView()
                 .environmentObject(appState)
         }
+        .menuBarExtraStyle(.window)
     }
 }

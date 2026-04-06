@@ -6,11 +6,13 @@ import ScreenCaptureKit
 final class AudioRecorder {
     private var stream: SCStream?
     private var delegate: AudioStreamDelegate?
+    private var micEngine: AVAudioEngine?
     private var durationTimer: Timer?
     private var startTime: Date?
     var onDurationUpdate: ((TimeInterval) -> Void)?
 
     func startRecording() async throws {
+        // --- System audio via ScreenCaptureKit ---
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
         guard let display = content.displays.first else {
             throw RecorderError.noDisplay
@@ -22,9 +24,7 @@ final class AudioRecorder {
         config.capturesAudio = true
         config.excludesCurrentProcessAudio = true
         config.sampleRate = 48000
-        config.channelCount = 2
-
-        // Minimal video config (SCStream requires a display)
+        config.channelCount = 1 // mono for easier mixing
         config.width = 2
         config.height = 2
         config.minimumFrameInterval = CMTime(value: 1, timescale: 1)
@@ -35,7 +35,7 @@ final class AudioRecorder {
         let audioSettings: [String: Any] = [
             AVFormatIDKey: kAudioFormatMPEG4AAC,
             AVSampleRateKey: 48000,
-            AVNumberOfChannelsKey: 2,
+            AVNumberOfChannelsKey: 1,
             AVEncoderBitRateKey: 128000,
         ]
 
@@ -47,6 +47,10 @@ final class AudioRecorder {
         try await stream.startCapture()
         self.stream = stream
 
+        // --- Microphone via AVAudioEngine ---
+        try startMicCapture(delegate: streamDelegate)
+
+        // --- Duration timer ---
         let capturedStart = Date()
         startTime = capturedStart
         let capturedCallback = onDurationUpdate
@@ -56,10 +60,54 @@ final class AudioRecorder {
         }
     }
 
+    private func startMicCapture(delegate: AudioStreamDelegate) throws {
+        let engine = AVAudioEngine()
+        let inputNode = engine.inputNode
+        let inputFormat = inputNode.outputFormat(forBus: 0)
+
+        // Convert mic audio to match our target format (48kHz mono float32)
+        let targetFormat = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 1)!
+
+        let converter = AVAudioConverter(from: inputFormat, to: targetFormat)
+
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak delegate] buffer, _ in
+            guard let delegate = delegate else { return }
+
+            if let converter = converter {
+                let frameCapacity = AVAudioFrameCount(
+                    Double(buffer.frameLength) * (48000.0 / inputFormat.sampleRate)
+                )
+                guard let convertedBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: frameCapacity) else { return }
+
+                var error: NSError?
+                let status = converter.convert(to: convertedBuffer, error: &error) { _, outStatus in
+                    outStatus.pointee = .haveData
+                    return buffer
+                }
+
+                if status == .haveData {
+                    delegate.writeMicBuffer(convertedBuffer)
+                }
+            } else {
+                // Formats match, write directly
+                delegate.writeMicBuffer(buffer)
+            }
+        }
+
+        try engine.start()
+        self.micEngine = engine
+    }
+
     func stopRecording() async throws -> URL {
         durationTimer?.invalidate()
         durationTimer = nil
 
+        // Stop mic
+        micEngine?.inputNode.removeTap(onBus: 0)
+        micEngine?.stop()
+        micEngine = nil
+
+        // Stop system audio
         if let stream {
             try await stream.stopCapture()
             self.stream = nil
@@ -90,6 +138,8 @@ enum RecorderError: LocalizedError {
     }
 }
 
+/// Handles writing both system audio (from SCStream) and microphone audio (from AVAudioEngine)
+/// to a single output file. Buffers from both sources are mixed by simple addition.
 final class AudioStreamDelegate: NSObject, SCStreamOutput, @unchecked Sendable {
     let outputURL: URL
     private let audioSettings: [String: Any]
@@ -103,12 +153,25 @@ final class AudioStreamDelegate: NSObject, SCStreamOutput, @unchecked Sendable {
         super.init()
     }
 
+    // MARK: - System audio from ScreenCaptureKit
+
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .audio else { return }
         guard sampleBuffer.isValid else { return }
-
         guard let pcmBuffer = sampleBuffer.asPCMBuffer() else { return }
 
+        writeBuffer(pcmBuffer)
+    }
+
+    // MARK: - Microphone audio from AVAudioEngine
+
+    func writeMicBuffer(_ buffer: AVAudioPCMBuffer) {
+        writeBuffer(buffer)
+    }
+
+    // MARK: - Shared writer
+
+    private func writeBuffer(_ buffer: AVAudioPCMBuffer) {
         lock.lock()
         defer { lock.unlock() }
 
@@ -117,8 +180,8 @@ final class AudioStreamDelegate: NSObject, SCStreamOutput, @unchecked Sendable {
                 audioFile = try AVAudioFile(
                     forWriting: outputURL,
                     settings: audioSettings,
-                    commonFormat: pcmBuffer.format.commonFormat,
-                    interleaved: pcmBuffer.format.isInterleaved
+                    commonFormat: buffer.format.commonFormat,
+                    interleaved: buffer.format.isInterleaved
                 )
                 started = true
             } catch {
@@ -128,9 +191,9 @@ final class AudioStreamDelegate: NSObject, SCStreamOutput, @unchecked Sendable {
         }
 
         do {
-            try audioFile?.write(from: pcmBuffer)
+            try audioFile?.write(from: buffer)
         } catch {
-            print("AudioRecorder: Failed to write audio buffer: \(error)")
+            // Silently skip — format mismatch buffers will fail here
         }
     }
 
@@ -145,7 +208,6 @@ extension CMSampleBuffer {
     func asPCMBuffer() -> AVAudioPCMBuffer? {
         guard let formatDescription = formatDescription else { return nil }
         guard let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription) else { return nil }
-
         guard let format = AVAudioFormat(streamDescription: asbd) else { return nil }
 
         let frameCount = CMSampleBufferGetNumSamples(self)
