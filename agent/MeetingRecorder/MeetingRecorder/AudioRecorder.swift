@@ -10,6 +10,7 @@ final class AudioRecorder {
     private var durationTimer: Timer?
     private var startTime: Date?
     var onDurationUpdate: ((TimeInterval) -> Void)?
+    var onStreamError: ((Error) -> Void)?
 
     func startRecording() async throws {
         // --- System audio via ScreenCaptureKit ---
@@ -42,7 +43,12 @@ final class AudioRecorder {
         let streamDelegate = AudioStreamDelegate(outputURL: outputURL, audioSettings: audioSettings)
         self.delegate = streamDelegate
 
-        let stream = SCStream(filter: filter, configuration: config, delegate: nil)
+        let capturedOnError = onStreamError
+        streamDelegate.onStreamError = { error in
+            capturedOnError?(error)
+        }
+
+        let stream = SCStream(filter: filter, configuration: config, delegate: streamDelegate)
         try stream.addStreamOutput(streamDelegate, type: .audio, sampleHandlerQueue: .global(qos: .userInitiated))
         try await stream.startCapture()
         self.stream = stream
@@ -107,9 +113,13 @@ final class AudioRecorder {
         micEngine?.stop()
         micEngine = nil
 
-        // Stop system audio
+        // Stop system audio (may already be stopped if permission was revoked)
         if let stream {
-            try await stream.stopCapture()
+            do {
+                try await stream.stopCapture()
+            } catch {
+                print("AudioRecorder: stream.stopCapture failed (likely already stopped): \(error)")
+            }
             self.stream = nil
         }
 
@@ -138,19 +148,42 @@ enum RecorderError: LocalizedError {
     }
 }
 
-/// Handles writing both system audio (from SCStream) and microphone audio (from AVAudioEngine)
-/// to a single output file. Buffers from both sources are mixed by simple addition.
-final class AudioStreamDelegate: NSObject, SCStreamOutput, @unchecked Sendable {
+/// Handles writing system audio and microphone audio to separate files,
+/// then merging them into a single output file when recording stops.
+final class AudioStreamDelegate: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     let outputURL: URL
     private let audioSettings: [String: Any]
-    private let lock = NSLock()
-    private var audioFile: AVAudioFile?
-    private var started = false
+
+    private let systemLock = NSLock()
+    private let micLock = NSLock()
+    private var systemFile: AVAudioFile?
+    private var micFile: AVAudioFile?
+    private var systemStarted = false
+    private var micStarted = false
+
+    private let systemURL: URL
+    private let micURL: URL
+
+    /// Called on main thread when the stream dies unexpectedly
+    var onStreamError: ((Error) -> Void)?
+    private(set) var streamFailed = false
 
     init(outputURL: URL, audioSettings: [String: Any]) {
         self.outputURL = outputURL
         self.audioSettings = audioSettings
+        let base = outputURL.deletingLastPathComponent()
+        let ts = Int(Date().timeIntervalSince1970)
+        self.systemURL = base.appendingPathComponent("system_\(ts).caf")
+        self.micURL = base.appendingPathComponent("mic_\(ts).caf")
         super.init()
+    }
+
+    // MARK: - SCStreamDelegate (error handling)
+
+    func stream(_ stream: SCStream, didStopWithError error: Error) {
+        print("AudioRecorder: stream stopped with error: \(error)")
+        streamFailed = true
+        onStreamError?(error)
     }
 
     // MARK: - System audio from ScreenCaptureKit
@@ -160,47 +193,230 @@ final class AudioStreamDelegate: NSObject, SCStreamOutput, @unchecked Sendable {
         guard sampleBuffer.isValid else { return }
         guard let pcmBuffer = sampleBuffer.asPCMBuffer() else { return }
 
-        writeBuffer(pcmBuffer)
-    }
+        systemLock.lock()
+        defer { systemLock.unlock() }
 
-    // MARK: - Microphone audio from AVAudioEngine
-
-    func writeMicBuffer(_ buffer: AVAudioPCMBuffer) {
-        writeBuffer(buffer)
-    }
-
-    // MARK: - Shared writer
-
-    private func writeBuffer(_ buffer: AVAudioPCMBuffer) {
-        lock.lock()
-        defer { lock.unlock() }
-
-        if !started {
+        if !systemStarted {
             do {
-                audioFile = try AVAudioFile(
-                    forWriting: outputURL,
-                    settings: audioSettings,
-                    commonFormat: buffer.format.commonFormat,
-                    interleaved: buffer.format.isInterleaved
+                systemFile = try AVAudioFile(
+                    forWriting: systemURL,
+                    settings: [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 48000, AVNumberOfChannelsKey: 1, AVLinearPCMBitDepthKey: 32, AVLinearPCMIsFloatKey: true],
+                    commonFormat: pcmBuffer.format.commonFormat,
+                    interleaved: pcmBuffer.format.isInterleaved
                 )
-                started = true
+                systemStarted = true
+                print("AudioRecorder: system audio file created, format: \(pcmBuffer.format)")
             } catch {
-                print("AudioRecorder: Failed to create audio file: \(error)")
+                print("AudioRecorder: Failed to create system audio file: \(error)")
                 return
             }
         }
 
         do {
-            try audioFile?.write(from: buffer)
+            try systemFile?.write(from: pcmBuffer)
         } catch {
-            // Silently skip — format mismatch buffers will fail here
+            print("AudioRecorder: system write error: \(error)")
         }
     }
 
+    // MARK: - Microphone audio from AVAudioEngine
+
+    func writeMicBuffer(_ buffer: AVAudioPCMBuffer) {
+        micLock.lock()
+        defer { micLock.unlock() }
+
+        if !micStarted {
+            do {
+                micFile = try AVAudioFile(
+                    forWriting: micURL,
+                    settings: [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 48000, AVNumberOfChannelsKey: 1, AVLinearPCMBitDepthKey: 32, AVLinearPCMIsFloatKey: true],
+                    commonFormat: buffer.format.commonFormat,
+                    interleaved: buffer.format.isInterleaved
+                )
+                micStarted = true
+                print("AudioRecorder: mic audio file created, format: \(buffer.format)")
+            } catch {
+                print("AudioRecorder: Failed to create mic audio file: \(error)")
+                return
+            }
+        }
+
+        do {
+            try micFile?.write(from: buffer)
+        } catch {
+            print("AudioRecorder: mic write error: \(error)")
+        }
+    }
+
+    // MARK: - Merge and finish
+
     func finish() {
-        lock.lock()
-        defer { lock.unlock() }
-        audioFile = nil
+        systemLock.lock()
+        systemFile = nil
+        systemLock.unlock()
+
+        micLock.lock()
+        micFile = nil
+        micLock.unlock()
+
+        mergeToOutput()
+
+        // Clean up temp files
+        try? FileManager.default.removeItem(at: systemURL)
+        try? FileManager.default.removeItem(at: micURL)
+    }
+
+    private func mergeToOutput() {
+        let targetFormat = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 1)!
+        let bufferSize: AVAudioFrameCount = 4096
+
+        // Open whichever source files exist
+        let systemReader = try? AVAudioFile(forReading: systemURL)
+        let micReader = try? AVAudioFile(forReading: micURL)
+
+        if systemReader == nil && micReader == nil {
+            print("AudioRecorder: no audio files to merge")
+            return
+        }
+
+        // If only one source, just encode it to the output
+        if systemReader == nil || micReader == nil {
+            let source = systemReader ?? micReader!
+            encodeToOutput(source: source, targetFormat: targetFormat, bufferSize: bufferSize)
+            return
+        }
+
+        // Both sources exist — mix them
+        guard let outputFile = try? AVAudioFile(
+            forWriting: outputURL,
+            settings: audioSettings,
+            commonFormat: .pcmFormatFloat32,
+            interleaved: false
+        ) else {
+            print("AudioRecorder: failed to create output file for merge")
+            return
+        }
+
+        // Create converters if needed
+        let systemConverter = (systemReader!.processingFormat != targetFormat)
+            ? AVAudioConverter(from: systemReader!.processingFormat, to: targetFormat) : nil
+        let micConverter = (micReader!.processingFormat != targetFormat)
+            ? AVAudioConverter(from: micReader!.processingFormat, to: targetFormat) : nil
+
+        let systemBuf = AVAudioPCMBuffer(pcmFormat: systemReader!.processingFormat, frameCapacity: bufferSize)!
+        let micBuf = AVAudioPCMBuffer(pcmFormat: micReader!.processingFormat, frameCapacity: bufferSize)!
+        let systemConverted = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: bufferSize)!
+        let micConverted = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: bufferSize)!
+        let mixBuf = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: bufferSize)!
+
+        let systemTotal = systemReader!.length
+        let micTotal = micReader!.length
+        let maxFrames = max(systemTotal, micTotal)
+        var framesProcessed: AVAudioFramePosition = 0
+
+        while framesProcessed < maxFrames {
+            let framesToRead = min(AVAudioFramePosition(bufferSize), maxFrames - framesProcessed)
+
+            // Read and convert system audio
+            var systemFrames: AVAudioFrameCount = 0
+            var systemSamples: UnsafeMutablePointer<Float>?
+            if framesProcessed < systemTotal, let reader = systemReader {
+                do {
+                    try reader.read(into: systemBuf, frameCount: AVAudioFrameCount(framesToRead))
+                    if let conv = systemConverter {
+                        systemConverted.frameLength = 0
+                        var convError: NSError?
+                        conv.convert(to: systemConverted, error: &convError) { _, outStatus in
+                            outStatus.pointee = .haveData
+                            return systemBuf
+                        }
+                        if let ch = systemConverted.floatChannelData { systemSamples = ch[0] }
+                        systemFrames = systemConverted.frameLength
+                    } else {
+                        if let ch = systemBuf.floatChannelData { systemSamples = ch[0] }
+                        systemFrames = systemBuf.frameLength
+                    }
+                } catch {}
+            }
+
+            // Read and convert mic audio
+            var micFrames: AVAudioFrameCount = 0
+            var micSamples: UnsafeMutablePointer<Float>?
+            if framesProcessed < micTotal, let reader = micReader {
+                do {
+                    try reader.read(into: micBuf, frameCount: AVAudioFrameCount(framesToRead))
+                    if let conv = micConverter {
+                        micConverted.frameLength = 0
+                        var convError: NSError?
+                        conv.convert(to: micConverted, error: &convError) { _, outStatus in
+                            outStatus.pointee = .haveData
+                            return micBuf
+                        }
+                        if let ch = micConverted.floatChannelData { micSamples = ch[0] }
+                        micFrames = micConverted.frameLength
+                    } else {
+                        if let ch = micBuf.floatChannelData { micSamples = ch[0] }
+                        micFrames = micBuf.frameLength
+                    }
+                } catch {}
+            }
+
+            // Mix: add both sources into mixBuf
+            let outFrames = max(systemFrames, micFrames)
+            guard outFrames > 0, let mixChannels = mixBuf.floatChannelData else { break }
+            let mixChannel = mixChannels[0]
+            mixBuf.frameLength = outFrames
+
+            for i in 0..<Int(outFrames) {
+                let s: Float = (i < Int(systemFrames) && systemSamples != nil) ? systemSamples![i] : 0
+                let m: Float = (i < Int(micFrames) && micSamples != nil) ? micSamples![i] : 0
+                mixChannel[i] = s + m
+            }
+
+            do {
+                try outputFile.write(from: mixBuf)
+            } catch {
+                print("AudioRecorder: merge write error: \(error)")
+                break
+            }
+
+            framesProcessed += AVAudioFramePosition(outFrames)
+        }
+
+        print("AudioRecorder: merged \(systemTotal) system + \(micTotal) mic frames → \(outputURL.lastPathComponent)")
+    }
+
+    private func encodeToOutput(source: AVAudioFile, targetFormat: AVAudioFormat, bufferSize: AVAudioFrameCount) {
+        guard let outputFile = try? AVAudioFile(
+            forWriting: outputURL,
+            settings: audioSettings,
+            commonFormat: .pcmFormatFloat32,
+            interleaved: false
+        ) else { return }
+
+        let converter = (source.processingFormat != targetFormat)
+            ? AVAudioConverter(from: source.processingFormat, to: targetFormat) : nil
+        let readBuf = AVAudioPCMBuffer(pcmFormat: source.processingFormat, frameCapacity: bufferSize)!
+        let convBuf = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: bufferSize)!
+
+        while source.framePosition < source.length {
+            do {
+                try source.read(into: readBuf)
+                if let conv = converter {
+                    convBuf.frameLength = 0
+                    var convError: NSError?
+                    conv.convert(to: convBuf, error: &convError) { _, outStatus in
+                        outStatus.pointee = .haveData
+                        return readBuf
+                    }
+                    try outputFile.write(from: convBuf)
+                } else {
+                    try outputFile.write(from: readBuf)
+                }
+            } catch {
+                break
+            }
+        }
     }
 }
 
