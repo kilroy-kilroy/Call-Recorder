@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
     // Create meeting record
     const [meeting] = await sql`
       INSERT INTO meetings (recorded_at, duration_seconds, status)
-      VALUES (${recordedAt}, ${durationSeconds}, 'uploading')
+      VALUES (${recordedAt}, ${durationSeconds}, 'processing')
       RETURNING *
     `;
 
